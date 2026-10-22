@@ -14,7 +14,28 @@ import {
 } from 'lucide-react'
 import { PillButton } from '../components/ui'
 import JordanMap from '../components/JordanMap'
-import { mapPins } from '../data/mock'
+import { ApiError } from '../api'
+import {
+  CATEGORY_LABELS, LANGUAGE_LABELS, createStory, formatDuration, submitStory, updateStory,
+  uploadAudio, type CategoryValue, type LanguageValue, type StoryRecord,
+} from '../stories'
+
+// Until the map-click pin arrives (ticket #7), the pin is placed at the chosen place.
+const PLACES: { name: string; lat: number; lng: number }[] = [
+  { name: 'Amman', lat: 31.9539, lng: 35.9106 },
+  { name: 'Petra', lat: 30.3285, lng: 35.4444 },
+  { name: 'Madaba', lat: 31.7167, lng: 35.7939 },
+  { name: 'Jerash', lat: 32.2722, lng: 35.8911 },
+  { name: 'Wadi Rum', lat: 29.5759, lng: 35.4204 },
+  { name: 'Aqaba', lat: 29.532, lng: 35.0063 },
+]
+
+const fieldClass =
+  'mt-1 w-full rounded-lg border border-border bg-cream px-3 py-2 text-sm text-ink outline-none focus:ring-2 focus:ring-terracotta/30'
+
+function messageOf(err: unknown, fallback: string) {
+  return err instanceof ApiError ? err.message : fallback
+}
 
 const steps = ['Record', 'Transcript', 'Visualize', 'Publish']
 
@@ -38,6 +59,18 @@ export default function CreateStoryPage() {
   const [dragOver, setDragOver] = useState(false)
   const timerRef = useRef<number | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const audioInputRef = useRef<HTMLInputElement>(null)
+  const [draft, setDraft] = useState<StoryRecord | null>(null)
+  const [audioName, setAudioName] = useState('')
+  const [uploading, setUploading] = useState(false)
+  const [audioError, setAudioError] = useState('')
+  const [title, setTitle] = useState('')
+  const [category, setCategory] = useState<CategoryValue | ''>('')
+  const [placeName, setPlaceName] = useState('')
+  const [language, setLanguage] = useState<LanguageValue | ''>('')
+  const [publishing, setPublishing] = useState(false)
+  const [publishError, setPublishError] = useState('')
+  const place = PLACES.find((p) => p.name === placeName)
 
   useEffect(() => {
     if (recording) {
@@ -103,12 +136,46 @@ export default function CreateStoryPage() {
     })
   }
 
+  async function onAudioChosen(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setAudioError('')
+    setUploading(true)
+    try {
+      const story = draft ?? (await createStory())
+      setDraft(await uploadAudio(story.id, file, file.name))
+      setAudioName(file.name)
+    } catch (err) {
+      setAudioError(messageOf(err, 'The upload failed. Please try again.'))
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  async function publish() {
+    if (!draft) return
+    setPublishError('')
+    setPublishing(true)
+    try {
+      await updateStory(draft.id, {
+        title,
+        category: category || null,
+        place_name: placeName,
+        latitude: place?.lat ?? null,
+        longitude: place?.lng ?? null,
+        original_language: language || null,
+      })
+      const published = await submitStory(draft.id)
+      navigate(`/story/${published.id}`)
+    } catch (err) {
+      setPublishError(messageOf(err, 'Publishing failed. Please try again.'))
+      setPublishing(false)
+    }
+  }
+
   function next() {
     if (step < 4) setStep(step + 1)
-    else {
-      if (photos[0]) sessionStorage.setItem('hikaya-draft-cover', photos[0].url)
-      navigate('/story/echoes-of-jerash')
-    }
   }
 
   return (
@@ -190,6 +257,38 @@ export default function CreateStoryPage() {
             </button>
           </div>
 
+          <div className="mt-4 rounded-xl2 border border-border bg-panel p-5 text-center">
+            <input
+              ref={audioInputRef}
+              type="file"
+              accept="audio/*,video/webm"
+              className="hidden"
+              onChange={onAudioChosen}
+              aria-label="Upload an audio recording"
+            />
+            <p className="mb-3 text-sm text-ink2">Or upload a recording you already have</p>
+            <PillButton
+              type="button"
+              variant="outline"
+              disabled={uploading}
+              onClick={() => audioInputRef.current?.click()}
+              className="disabled:opacity-60"
+            >
+              <Cloud size={14} /> {uploading ? 'Uploading…' : draft?.audio ? 'Replace audio file' : 'Upload audio file'}
+            </PillButton>
+            <p className="mt-2 text-[11px] text-muted">WebM, Ogg, MP3, M4A or WAV · up to 100 MB · up to 60 minutes</p>
+            {draft?.audio && (
+              <p className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-teal-light px-3 py-1 text-xs font-medium text-teal">
+                <Check size={12} /> {audioName} · {formatDuration(draft.duration_ms)}
+              </p>
+            )}
+            {audioError && (
+              <p role="alert" className="mt-3 rounded-lg bg-terracotta-light px-3 py-2 text-sm text-terracotta-dark">
+                {audioError}
+              </p>
+            )}
+          </div>
+
           <div className="my-6 grid grid-cols-3 gap-3">
             {infoChips.map(({ icon: Icon, label, value }) => (
               <div key={label} className="rounded-xl border border-border px-3 py-4 text-center">
@@ -203,7 +302,8 @@ export default function CreateStoryPage() {
           <div className="text-center">
             <button
               onClick={next}
-              className="inline-flex items-center gap-1.5 text-sm font-medium text-ink2"
+              disabled={!draft?.audio}
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-ink2 disabled:opacity-40"
             >
               Done with recording? Continue to transcript <ArrowRight size={14} />
             </button>
@@ -346,18 +446,20 @@ export default function CreateStoryPage() {
       {step === 4 && (
         <div className="grid gap-5 text-left md:grid-cols-2">
           <div className="rounded-xl2 border border-border bg-panel p-5">
-            <div className="mb-3 text-xs text-muted">Confirm the pin</div>
+            <div className="mb-3 text-xs text-muted">Pin on the map</div>
             <div className="relative h-40 overflow-hidden rounded-lg">
               <JordanMap
-                pins={mapPins.filter((p) => p.storyId === 'echoes-of-petra')}
-                focusedStoryId="echoes-of-petra"
+                pins={place ? [{ id: 'draft', storyId: 'draft', lat: place.lat, lng: place.lng, kind: 'recent', label: title || 'Your story' }] : []}
+                focusedStoryId={place ? 'draft' : null}
                 interactive={false}
-                zoom={9}
+                zoom={place ? 9 : 6}
                 flyToFocused
                 className="absolute inset-0"
               />
             </div>
-            <p className="mt-2 text-[11px] text-muted2">Pinned near Petra · Exact coordinates confirmed</p>
+            <p className="mt-2 text-[11px] text-muted2">
+              {place ? `Pinned at ${place.name}` : 'Choose a place to pin your story.'}
+            </p>
             {photos[0] && (
               <div className="mt-3 overflow-hidden rounded-lg border border-border">
                 <img src={photos[0].url} alt="" className="h-28 w-full object-cover" />
@@ -367,21 +469,67 @@ export default function CreateStoryPage() {
               </div>
             )}
           </div>
-          <div className="rounded-xl2 border border-border bg-panel p-5">
-            <div className="mb-2 text-xs text-muted">Ready to publish</div>
-            <p className="mb-4 text-sm text-ink2">
-              Your story will appear on the map, in the social feed, and in its regional collection.
+          <form
+            className="space-y-3 rounded-xl2 border border-border bg-panel p-5"
+            onSubmit={(e) => {
+              e.preventDefault()
+              void publish()
+            }}
+          >
+            <label className="block text-xs font-medium text-muted2">
+              Title
+              <input required maxLength={120} value={title} onChange={(e) => setTitle(e.target.value)} className={fieldClass} />
+            </label>
+            <label className="block text-xs font-medium text-muted2">
+              Category
+              <select required value={category} onChange={(e) => setCategory(e.target.value as CategoryValue)} className={fieldClass}>
+                <option value="" disabled>Choose a category</option>
+                {Object.entries(CATEGORY_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-xs font-medium text-muted2">
+              Place
+              <select required value={placeName} onChange={(e) => setPlaceName(e.target.value)} className={fieldClass}>
+                <option value="" disabled>Choose a place</option>
+                {PLACES.map((p) => (
+                  <option key={p.name} value={p.name}>{p.name}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-xs font-medium text-muted2">
+              Language you spoke
+              <select required value={language} onChange={(e) => setLanguage(e.target.value as LanguageValue)} className={fieldClass}>
+                <option value="" disabled>Choose a language</option>
+                {Object.entries(LANGUAGE_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </label>
+            {publishError && (
+              <p role="alert" className="rounded-lg bg-terracotta-light px-3 py-2 text-sm text-terracotta-dark">
+                {publishError}
+              </p>
+            )}
+            <p className="text-sm text-ink2">
+              Your story will appear on the map and in the social feed.
             </p>
-            <PillButton variant="teal" onClick={next}>
-              <Check size={14} /> Publish story
+            <PillButton type="submit" variant="teal" disabled={publishing || !draft?.audio} className="disabled:opacity-60">
+              <Check size={14} /> {publishing ? 'Publishing…' : 'Publish story'}
             </PillButton>
-          </div>
+          </form>
         </div>
       )}
 
       {step !== 3 && step !== 4 && (
         <div className="mt-2 flex justify-center">
-          <PillButton variant="primary" onClick={next}>
+          <PillButton
+            variant="primary"
+            onClick={next}
+            disabled={step === 1 && !draft?.audio}
+            className="disabled:cursor-not-allowed disabled:opacity-50"
+          >
             Continue <ArrowRight size={14} />
           </PillButton>
         </div>
@@ -424,7 +572,7 @@ export default function CreateStoryPage() {
       </div>
 
       <footer className="mt-10 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-5 text-[11px] text-muted">
-        <div>HIKAYA ARCHIVE PROJECT © 2024</div>
+        <div>HIKAYA ARCHIVE PROJECT © {new Date().getFullYear()}</div>
         <div className="flex gap-4">
           <span>Documentation</span>
           <span>Ethics Guidelines</span>

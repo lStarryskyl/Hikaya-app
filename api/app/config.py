@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     seed_reviewer_email: str = ""
     seed_reviewer_password: str = ""
 
+    # Uploads
+    max_audio_upload_mb: float = 100
+    max_audio_minutes: float = 60
+
     # Worker behaviour
     worker_poll_seconds: float = 1.0
     job_stale_after_seconds: int = 600

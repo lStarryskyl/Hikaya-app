@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 # Point the app at the test database before anything imports the settings.
@@ -8,6 +9,8 @@ TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL", "postgresql+asyncpg://hikaya:hikaya@localhost:5432/hikaya_test"
 )
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
+# Media written by tests goes to a throwaway folder.
+os.environ["MEDIA_DIR"] = tempfile.mkdtemp(prefix="hikaya-test-media-")
 
 import httpx  # noqa: E402
 import pytest  # noqa: E402
@@ -32,7 +35,7 @@ def migrated_database() -> None:
 async def sessionmaker():
     maker = get_sessionmaker()
     async with maker() as session:
-        await session.execute(text("TRUNCATE jobs, auth_sessions, users CASCADE"))
+        await session.execute(text("TRUNCATE jobs, assets, stories, auth_sessions, users CASCADE"))
         await session.commit()
     yield maker
     # The engine is bound to this test's event loop, so drop it after every test.

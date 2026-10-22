@@ -13,6 +13,12 @@ const FIELD_NAMES: Record<string, string> = {
   email: 'Email',
   password: 'Password',
   display_name: 'Name',
+  title: 'Title',
+  category: 'Category',
+  place_name: 'Place',
+  latitude: 'Map pin',
+  longitude: 'Map pin',
+  original_language: 'Language',
 }
 
 // FastAPI sends `detail` as a string for our own errors and as a list for validation errors.
@@ -29,15 +35,16 @@ function describe(data: unknown, status: number): string {
 
 export async function api<T>(
   path: string,
-  options: { method?: string; body?: unknown } = {},
+  options: { method?: string; body?: unknown; form?: FormData } = {},
 ): Promise<T> {
   const hasBody = options.body !== undefined
   let res: Response
   try {
     res = await fetch(`/api/v1${path}`, {
-      method: options.method ?? (hasBody ? 'POST' : 'GET'),
+      method: options.method ?? (hasBody || options.form ? 'POST' : 'GET'),
       headers: hasBody ? { 'Content-Type': 'application/json' } : undefined,
-      body: hasBody ? JSON.stringify(options.body) : undefined,
+      // A FormData body sets its own multipart content type.
+      body: options.form ?? (hasBody ? JSON.stringify(options.body) : undefined),
       credentials: 'same-origin',
     })
   } catch {

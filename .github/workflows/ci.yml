@@ -48,6 +48,8 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: api/requirements-dev.txt
+      - name: FFmpeg (audio upload tests convert real recordings)
+        run: which ffmpeg || (sudo apt-get update -q && sudo apt-get install -y -q ffmpeg)
       - run: pip install -r requirements-dev.txt
       - run: ruff check .
       - run: ruff format --check .

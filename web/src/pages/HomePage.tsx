@@ -2,31 +2,44 @@ import { Link } from 'react-router-dom'
 import { ArrowRight, Heart, Mic, Play, Share2, Sparkles } from 'lucide-react'
 import { Badge, Card, PillButton } from '../components/ui'
 import JordanMap from '../components/JordanMap'
-import { stories, mapPins, imageUrl, avatarUrl } from '../data/mock'
+import Photo from '../components/Photo'
+import { initials } from '../auth'
+import { findPhoto, getFeed, getPins, getPlaces } from '../discover'
+import { CATEGORY_LABELS, formatDuration, type CategoryValue } from '../stories'
+import { toMapPins } from '../types'
+import { useApi } from '../useApi'
 
-const stats = [
-  { label: 'Stories told', value: '2,481' },
-  { label: 'Active listeners', value: '12.5k' },
-  { label: 'Localities', value: '42' },
-]
-
-const featured = stories.slice(0, 3)
-
-const badgeTone: Record<string, 'terracotta' | 'gold' | 'teal'> = {
-  Crafts: 'gold',
-  'Daily Life': 'terracotta',
-  Folklore: 'teal',
-  History: 'terracotta',
-  Personal: 'gold',
+const badgeTone: Record<CategoryValue, 'terracotta' | 'gold' | 'teal'> = {
+  crafts: 'gold',
+  daily_life: 'terracotta',
+  folklore: 'teal',
+  history: 'terracotta',
+  personal: 'gold',
 }
 
 export default function HomePage() {
+  const feed = useApi(() => getFeed({ limit: 50 }), [])
+  const pins = useApi(getPins, [])
+  const places = useApi(getPlaces, [])
+
+  const stories = feed.data?.items ?? []
+  // Curated stories lead "Voice of the Week"; newer stories fill any gap.
+  const featured = [...stories.filter((s) => s.curated), ...stories.filter((s) => !s.curated)].slice(0, 3)
+  const recentCount = (pins.data ?? []).filter((p) => p.kind === 'recent').length
+  const hero = findPhoto(places.data, 'petra-treasury-hero') ?? places.data?.[0]?.cover
+  const stats = [
+    { label: 'Stories told', value: stories.length || '…' },
+    { label: 'Places', value: places.data?.length || '…' },
+    { label: 'In the museum', value: feed.data ? stories.filter((s) => s.curated).length : '…' },
+  ]
+
   return (
     <div className="pb-16">
       <section className="relative mx-4 mt-5 overflow-hidden rounded-xl2 border border-border sm:mx-6 sm:mt-6">
-        <img
-          src={imageUrl('petra-treasury-hero', 1600, 700)}
-          alt=""
+        <Photo
+          photo={hero}
+          width={1600}
+          sizes="100vw"
           className="absolute inset-0 h-full w-full object-cover sepia-[.15] saturate-[.85]"
         />
         <div className="absolute inset-0 bg-gradient-to-r from-black/70 via-black/40 to-black/10" />
@@ -49,7 +62,7 @@ export default function HomePage() {
                 <Mic size={15} /> Record a story
               </PillButton>
             </Link>
-            <Link to="/story/echoes-of-jerash">
+            <Link to={featured[0] ? `/story/${featured[0].id}` : '/explore'}>
               <PillButton
                 variant="outline"
                 className="!border-cream/40 !text-cream hover:!bg-white/10"
@@ -86,26 +99,29 @@ export default function HomePage() {
           </Link>
         </div>
 
+        {feed.error && <p className="text-sm text-terracotta-dark">{feed.error}</p>}
         <div className="grid gap-5 md:grid-cols-3">
           {featured.map((s) => (
             <Card key={s.id} className="h-full overflow-hidden transition-shadow hover:shadow-md">
               <Link to={`/story/${s.id}`} className="block">
                 <div className="relative h-40">
-                  <img
-                    src={imageUrl(s.imageSeed, 500, 320, s.place)}
-                    alt=""
+                  <Photo
+                    photo={s.cover}
+                    width={500}
+                    sizes="(min-width: 768px) 33vw, 100vw"
                     className="h-full w-full object-cover sepia-[.1]"
                   />
-                  <div className="absolute left-3 top-3">
-                    <Badge tone={badgeTone[s.category]}>{s.category}</Badge>
+                  <div className="absolute left-3 top-3 flex gap-1.5">
+                    {s.category && <Badge tone={badgeTone[s.category]}>{CATEGORY_LABELS[s.category]}</Badge>}
+                    {s.curated && <Badge tone="teal">Curated</Badge>}
                   </div>
                   <div className="absolute bottom-3 right-3 flex items-center gap-1 rounded-full bg-black/60 px-2 py-1 text-[10px] text-cream">
-                    <Play size={10} /> {s.duration}
+                    <Play size={10} /> {formatDuration(s.duration_ms)}
                   </div>
                 </div>
               </Link>
               <div className="p-4">
-                <div className="mb-1 text-[11px] text-muted">@ {s.place.toUpperCase()}</div>
+                <div className="mb-1 text-[11px] text-muted">@ {s.place_name.toUpperCase()}</div>
                 <Link
                   to={`/story/${s.id}`}
                   className="mb-3 block font-serif text-[15px] text-ink hover:text-terracotta"
@@ -113,12 +129,10 @@ export default function HomePage() {
                   {s.title}
                 </Link>
                 <div className="flex items-center gap-2">
-                  <img
-                    src={avatarUrl(s.narratorAvatarSeed, 40)}
-                    className="h-5 w-5 rounded-full object-cover"
-                    alt=""
-                  />
-                  <span className="flex-1 text-[12px] text-muted2">{s.narrator}</span>
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-terracotta-light text-[8px] font-semibold text-terracotta-dark">
+                    {initials(s.author.display_name)}
+                  </span>
+                  <span className="flex-1 text-[12px] text-muted2">{s.author.display_name}</span>
                   <button type="button" className="text-muted hover:text-terracotta" aria-label="Like">
                     <Heart size={14} />
                   </button>
@@ -161,7 +175,7 @@ export default function HomePage() {
 
         <div className="relative h-72 overflow-hidden rounded-xl2 border border-border">
           <JordanMap
-            pins={mapPins}
+            pins={toMapPins(pins.data ?? [])}
             interactive={false}
             zoom={6.2}
             flyToFocused={false}
@@ -178,7 +192,11 @@ export default function HomePage() {
               </div>
               <div>
                 <div className="text-[11px] uppercase tracking-wide text-muted">Live map preview</div>
-                <div className="text-sm font-medium text-ink">12 new stories in Petra</div>
+                <div className="text-sm font-medium text-ink">
+                  {pins.data
+                    ? `${pins.data.length} stories on the map · ${recentCount} added in the last two weeks`
+                    : 'Loading the map…'}
+                </div>
               </div>
             </div>
           </Link>
@@ -225,7 +243,7 @@ export default function HomePage() {
           <span>archive policy</span>
           <span>contact</span>
         </div>
-        <div>© 2024 Hikaya Platform, Jordan.</div>
+        <div>© {new Date().getFullYear()} Hikaya Platform, Jordan.</div>
       </footer>
     </div>
   )

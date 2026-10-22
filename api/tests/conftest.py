@@ -37,7 +37,8 @@ async def sessionmaker():
     async with maker() as session:
         await session.execute(
             text(
-                "TRUNCATE jobs, pipeline_steps, text_layers, assets, stories, auth_sessions, users"
+                "TRUNCATE jobs, pipeline_steps, text_layers, assets, stories, auth_sessions, users,"
+                " place_photos, places"
                 " CASCADE"
             )
         )

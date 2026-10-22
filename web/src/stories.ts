@@ -1,4 +1,5 @@
 import { api } from './api'
+import type { Photo } from './discover'
 
 export type CategoryValue = 'crafts' | 'daily_life' | 'folklore' | 'history' | 'personal'
 export type LanguageValue = 'jordanian' | 'msa' | 'english'
@@ -48,6 +49,9 @@ export interface StoryRecord {
   author: { id: string; display_name: string }
   audio: { url: string; content_type: string; original_url: string } | null
   layers: TextLayer[]
+  place_slug: string | null
+  cover: Photo | null
+  curated: boolean
 }
 
 export type StoryFields = Partial<
@@ -105,7 +109,7 @@ export function timestamp(ms: number): string {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
 }
 
-/** Story ids from the API are UUIDs; the remaining mock stories use readable slugs. */
+/** Story ids are UUIDs; anything else in a story link cannot be a story. */
 export function isStoryId(id: string | undefined): id is string {
   return !!id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
 }

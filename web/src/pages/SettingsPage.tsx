@@ -12,11 +12,13 @@ import {
   User,
 } from 'lucide-react'
 import { Card, PillButton } from '../components/ui'
-import { avatarUrl } from '../data/mock'
+import { initials, useAuth } from '../auth'
 
 export default function SettingsPage() {
-  const [displayName, setDisplayName] = useState('Salma Khalil')
-  const [handle, setHandle] = useState('salma_k')
+  const { user } = useAuth()
+  // Settings editing is mock in the demo: changes stay on this page and are not saved.
+  const [displayName, setDisplayName] = useState(user?.display_name ?? '')
+  const [handle, setHandle] = useState(user?.email.split('@')[0] ?? '')
   const [bio, setBio] = useState(
     'Field collector and oral-history enthusiast documenting elders’ memories across Jordan.',
   )
@@ -54,7 +56,9 @@ export default function SettingsPage() {
           <User size={16} className="text-terracotta" /> Profile
         </div>
         <div className="flex items-center gap-3">
-          <img src={avatarUrl('salma-k', 80)} alt="" className="h-14 w-14 rounded-full object-cover" />
+          <span className="flex h-14 w-14 items-center justify-center rounded-full bg-terracotta-light font-semibold text-terracotta-dark">
+            {initials(user?.display_name ?? '?')}
+          </span>
           <div className="text-xs text-muted">Avatar is managed on your Profile page.</div>
         </div>
         <label className="block text-left text-xs font-medium text-muted2">

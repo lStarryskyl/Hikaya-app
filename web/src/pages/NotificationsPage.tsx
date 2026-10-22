@@ -2,7 +2,10 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Bell, Check, Heart, MapPin, MessageCircle, Mic, Trash2 } from 'lucide-react'
 import { Card, PillButton } from '../components/ui'
-import { avatarUrl, imageUrl } from '../data/mock'
+import Photo from '../components/Photo'
+import { findPhoto, getPlaces } from '../discover'
+import { mockAvatarUrl } from '../demo/mockEngagement'
+import { useApi } from '../useApi'
 
 type NotifKind = 'like' | 'comment' | 'story' | 'map' | 'system'
 
@@ -15,6 +18,7 @@ interface Notification {
   unread: boolean
   href?: string
   avatarSeed?: string
+  /** A place photo slug. */
   imageSeed?: string
 }
 
@@ -26,7 +30,7 @@ const INITIAL: Notification[] = [
     body: 'Morning Steam in Old Al-Balad received a new like.',
     timeAgo: '12 min ago',
     unread: true,
-    href: '/story/morning-steam',
+    href: '/feed',
     avatarSeed: 'layla-al-sayed',
   },
   {
@@ -36,7 +40,7 @@ const INITIAL: Notification[] = [
     body: '“This brought the Oval Plaza back to life — thank you.”',
     timeAgo: '1 hour ago',
     unread: true,
-    href: '/story/echoes-of-jerash',
+    href: '/feed',
     avatarSeed: 'omar-kassab',
   },
   {
@@ -46,8 +50,8 @@ const INITIAL: Notification[] = [
     body: 'The Loom of Ancestors was published in your followed region.',
     timeAgo: '3 hours ago',
     unread: true,
-    href: '/story/loom-of-ancestors',
-    imageSeed: 'madaba-loom',
+    href: '/feed',
+    imageSeed: 'weaving-loom-2',
   },
   {
     id: 'n4',
@@ -79,7 +83,9 @@ const iconFor: Record<NotifKind, typeof Heart> = {
 }
 
 export default function NotificationsPage() {
+  // Notifications are mock in the demo: this list lives only in the page.
   const [items, setItems] = useState(INITIAL)
+  const places = useApi(getPlaces, [])
   const unread = items.filter((n) => n.unread).length
 
   function markAllRead() {
@@ -134,14 +140,14 @@ export default function NotificationsPage() {
               >
                 {n.avatarSeed ? (
                   <img
-                    src={avatarUrl(n.avatarSeed, 80)}
+                    src={mockAvatarUrl(n.avatarSeed, 80)}
                     alt=""
                     className="h-11 w-11 shrink-0 rounded-full object-cover"
                   />
                 ) : n.imageSeed ? (
-                  <img
-                    src={imageUrl(n.imageSeed, 120, 120)}
-                    alt=""
+                  <Photo
+                    photo={findPhoto(places.data, n.imageSeed)}
+                    width={88}
                     className="h-11 w-11 shrink-0 rounded-lg object-cover"
                   />
                 ) : (

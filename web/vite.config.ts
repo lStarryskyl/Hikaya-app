@@ -5,6 +5,9 @@ import react from '@vitejs/plugin-react'
 // exactly like the nginx proxy in Docker, so the sign-in cookie works the same way.
 export default defineConfig({
   plugins: [react()],
+  // MapLibre loads its tile worker from a URL relative to its own module. Pre-bundling moves
+  // the module, so the worker would 404 in development.
+  optimizeDeps: { exclude: ['maplibre-gl'] },
   server: {
     proxy: {
       '/api': 'http://localhost:8000',

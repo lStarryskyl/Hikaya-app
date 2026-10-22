@@ -7,30 +7,30 @@ import { Badge, Card, PillButton } from '../components/ui'
 import TranscriptView from '../components/TranscriptView'
 import { ApiError } from '../api'
 import { initials } from '../auth'
-// Mock content still used for engagement and for the old slug links until the demo data
-// is loaded from the database (ticket #6).
-import { stories, transcript, upNext, reflections, imageUrl, avatarUrl } from '../data/mock'
-import { galleryForPlace, placeCircleImage } from '../data/images'
+import Photo from '../components/Photo'
+import { getFeed, getPlaces, type Photo as PhotoData } from '../discover'
+import { engagementFor, mockAvatarUrl, sampleReflections } from '../demo/mockEngagement'
 import {
   CATEGORY_LABELS, LANGUAGE_LABELS, formatDuration, getStory, isStoryId, type StoryRecord,
   type TextLayer,
 } from '../stories'
+import { useApi } from '../useApi'
 
-/** What the page needs, whether the story came from the API or from the old mock list. */
+/** What the page needs from a story. */
 interface PlayerStory {
   id: string
   title: string
   place: string
+  placeSlug: string | null
   category: string
   narrator: string
-  narratorAvatar: string | null
   durationLabel: string
   durationSec: number
-  coverSrc: string
+  cover: PhotoData | null
+  curated: boolean
   audioUrl: string | null
   languageLabel: string | null
   layers: TextLayer[]
-  isMock: boolean
 }
 
 function fromRecord(s: StoryRecord): PlayerStory {
@@ -38,36 +38,16 @@ function fromRecord(s: StoryRecord): PlayerStory {
     id: s.id,
     title: s.title,
     place: s.place_name,
+    placeSlug: s.place_slug,
     category: s.category ? CATEGORY_LABELS[s.category] : '',
     narrator: s.author.display_name,
-    narratorAvatar: null,
     durationLabel: formatDuration(s.duration_ms),
     durationSec: (s.duration_ms ?? 0) / 1000,
-    coverSrc: placeCircleImage(s.place_name, 1000),
+    cover: s.cover,
+    curated: s.curated,
     audioUrl: s.audio?.url ?? null,
     languageLabel: s.original_language ? LANGUAGE_LABELS[s.original_language] : null,
     layers: s.layers,
-    isMock: false,
-  }
-}
-
-function fromMock(id: string | undefined): PlayerStory | null {
-  const s = stories.find((m) => m.id === id)
-  if (!s) return null
-  return {
-    id: s.id,
-    title: s.title,
-    place: s.place,
-    category: s.category,
-    narrator: s.narrator,
-    narratorAvatar: avatarUrl(s.narratorAvatarSeed, 80),
-    durationLabel: s.duration,
-    durationSec: 0,
-    coverSrc: imageUrl(s.imageSeed, 1000, 600, s.place),
-    audioUrl: null,
-    languageLabel: null,
-    layers: [],
-    isMock: true,
   }
 }
 
@@ -86,8 +66,7 @@ export default function StoryPlayerPage() {
 
   useEffect(() => {
     if (!isStoryId(id)) {
-      const mock = fromMock(id)
-      setLoad(mock ? { state: 'ready', story: mock } : { state: 'missing' })
+      setLoad({ state: 'missing' })
       return
     }
     let cancelled = false
@@ -160,7 +139,11 @@ function Player({ story }: { story: PlayerStory }) {
 
   const canPlay = !!story.audioUrl && !audioError
   const progress = duration ? Math.min(100, (elapsed / duration) * 100) : 0
-  const gallery = galleryForPlace(story.place)
+  const places = useApi(getPlaces, [])
+  const gallery = places.data?.find((p) => p.slug === story.placeSlug)?.photos ?? []
+  const feed = useApi(() => getFeed({ limit: 4 }), [])
+  const upNext = (feed.data?.items ?? []).filter((s) => s.id !== story.id).slice(0, 3)
+  const mock = engagementFor(story.id)
 
   return (
     <div className="px-6 py-6 max-w-6xl mx-auto">
@@ -199,13 +182,12 @@ function Player({ story }: { story: PlayerStory }) {
       <div className="grid lg:grid-cols-[minmax(0,1fr)_340px] gap-6">
         <div>
           <div className="relative h-72 rounded-xl2 overflow-hidden mb-4">
-            <img src={story.coverSrc} className="w-full h-full object-cover" alt="" />
+            <Photo photo={story.cover} width={1000} sizes="(min-width: 1024px) 760px, 100vw" className="w-full h-full object-cover" />
             <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
-            {story.category && (
-              <div className="absolute top-4 left-4 flex gap-2">
-                <Badge tone="terracotta">{story.category}</Badge>
-              </div>
-            )}
+            <div className="absolute top-4 left-4 flex gap-2">
+              {story.category && <Badge tone="terracotta">{story.category}</Badge>}
+              {story.curated && <Badge tone="teal">Curated</Badge>}
+            </div>
             <div className="absolute bottom-4 left-4 text-cream">
               <h1 className="font-serif text-2xl">{story.title}</h1>
               <div className="text-xs text-cream/80 mt-1">
@@ -274,7 +256,7 @@ function Player({ story }: { story: PlayerStory }) {
               <p className="mt-3 text-center text-[11px] text-muted">
                 {audioError
                   ? 'The recording could not be played.'
-                  : 'This sample story has no recording yet.'}
+                  : 'This demo story has text only; its recording has not been added.'}
               </p>
             )}
           </Card>
@@ -285,11 +267,12 @@ function Player({ story }: { story: PlayerStory }) {
                 {story.place} gallery
               </div>
               <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-thin">
-                {gallery.map((src) => (
-                  <img
-                    key={src}
-                    src={src}
-                    alt={story.place}
+                {gallery.map((photo) => (
+                  <Photo
+                    key={photo.slug}
+                    photo={photo}
+                    width={288}
+                    alt={photo.caption}
                     className="h-24 w-36 shrink-0 rounded-lg border border-border object-cover"
                   />
                 ))}
@@ -309,13 +292,9 @@ function Player({ story }: { story: PlayerStory }) {
             </Card>
             <Card className="p-5">
               <div className="flex items-center gap-3 mb-3">
-                {story.narratorAvatar ? (
-                  <img src={story.narratorAvatar} className="w-12 h-12 rounded-full object-cover" alt="" />
-                ) : (
-                  <span className="flex h-12 w-12 items-center justify-center rounded-full bg-terracotta-light text-sm font-semibold text-terracotta-dark">
-                    {initials(story.narrator)}
-                  </span>
-                )}
+                <span className="flex h-12 w-12 items-center justify-center rounded-full bg-terracotta-light text-sm font-semibold text-terracotta-dark">
+                  {initials(story.narrator)}
+                </span>
                 <div>
                   <div className="text-sm font-semibold">{story.narrator}</div>
                   <div className="text-[11px] text-terracotta">Storyteller</div>
@@ -324,15 +303,15 @@ function Player({ story }: { story: PlayerStory }) {
             </Card>
           </div>
 
-          {/* community reflections: mock */}
+          {/* community reflections: mock (see demo/mockEngagement) */}
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-serif text-xl">Community Reflections</h2>
           </div>
           <div className="grid md:grid-cols-3 gap-4">
-            {reflections.map((c) => (
+            {sampleReflections.map((c) => (
               <Card key={c.name} className="p-4">
                 <div className="flex items-center gap-2 mb-2">
-                  <img src={avatarUrl(c.avatarSeed, 60)} className="w-8 h-8 rounded-full object-cover" alt="" />
+                  <img src={mockAvatarUrl(c.avatarSeed, 60)} className="w-8 h-8 rounded-full object-cover" alt="" />
                   <div>
                     <div className="text-[12px] font-semibold">{c.name}</div>
                     <div className="text-[10px] text-muted">{c.timeAgo}</div>
@@ -366,19 +345,7 @@ function Player({ story }: { story: PlayerStory }) {
           </Card>
 
           {tab === 'transcript' ? (
-            story.isMock ? (
-              <div className="space-y-3 mb-4">
-                {transcript.map((line) => (
-                  <div
-                    key={line.time}
-                    className={`text-[12.5px] leading-relaxed p-3 rounded-lg ${line.highlighted ? 'bg-terracotta-light border-l-2 border-terracotta text-ink2' : 'text-muted2'}`}
-                  >
-                    <span className="font-mono text-[10px] text-terracotta mr-2">{line.time}</span>
-                    {line.text}
-                  </div>
-                ))}
-              </div>
-            ) : story.layers.length > 0 ? (
+            story.layers.length > 0 ? (
               <TranscriptView
                 layers={story.layers}
                 elapsedMs={elapsed * 1000}
@@ -399,16 +366,27 @@ function Player({ story }: { story: PlayerStory }) {
             </Card>
           )}
 
+          <div className="grid grid-cols-2 gap-3 mb-6">
+            <Card className="p-3 text-center">
+              <div className="font-serif text-lg">{mock.likes.toLocaleString()}</div>
+              <div className="text-[11px] text-muted">Likes</div>
+            </Card>
+            <Card className="p-3 text-center">
+              <div className="font-serif text-lg">{mock.comments}</div>
+              <div className="text-[11px] text-muted">Comments</div>
+            </Card>
+          </div>
+
           <div className="flex items-center justify-between mb-3">
             <div className="text-xs font-semibold uppercase tracking-wide text-muted">Up next</div>
           </div>
           <div className="space-y-2">
             {upNext.map((u) => (
               <Link to={`/story/${u.id}`} key={u.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-cream">
-                <img src={imageUrl(u.imageSeed, 100, 100)} className="w-11 h-11 rounded-md object-cover" alt="" />
+                <Photo photo={u.cover} width={88} className="w-11 h-11 shrink-0 rounded-md object-cover" />
                 <div className="min-w-0">
                   <div className="text-[12.5px] font-medium truncate">{u.title}</div>
-                  <div className="text-[11px] text-muted">{u.author} · {u.duration}</div>
+                  <div className="text-[11px] text-muted">{u.author.display_name} · {formatDuration(u.duration_ms)}</div>
                 </div>
               </Link>
             ))}

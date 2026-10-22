@@ -22,6 +22,7 @@ jobs:
 
   api:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: api
@@ -49,7 +50,18 @@ jobs:
           cache: pip
           cache-dependency-path: api/requirements-dev.txt
       - name: FFmpeg (audio upload tests convert real recordings)
-        run: which ffmpeg || (sudo apt-get update -q && sudo apt-get install -y -q ffmpeg)
+        # A slow package mirror must fail fast instead of holding the run for an hour.
+        timeout-minutes: 8
+        run: |
+          which ffmpeg && exit 0
+          for attempt in 1 2 3; do
+            sudo timeout 150 apt-get -o Acquire::Retries=3 update -q \
+              && sudo timeout 240 apt-get -o Acquire::Retries=3 install -y -q --no-install-recommends ffmpeg \
+              && exit 0
+            echo "apt attempt $attempt failed; retrying"
+            sleep 10
+          done
+          exit 1
       - run: pip install -r requirements-dev.txt
       - run: ruff check .
       - run: ruff format --check .
@@ -83,6 +95,14 @@ jobs:
             sleep 1
           done
           exit 1
+      - name: The demo stories and photos are loaded
+        run: |
+          set -e
+          base=http://localhost:5173
+          test "$(curl -fsS "$base/api/v1/stories?limit=50" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["items"]))')" = 7
+          test "$(curl -fsS $base/api/v1/map/pins | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" = 7
+          photo=$(curl -fsS $base/api/v1/places | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["cover"]["urls"]["480"])')
+          curl -fsS -o /tmp/photo.webp -w '%{content_type}\n' "$base$photo" | grep -q image/webp
       - name: Sign-up, sign-in, roles and sign-out work through the web proxy
         run: |
           set -e
@@ -104,7 +124,11 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' -b member.jar $base/auth/me)" = 401
       - name: Logs on failure
         if: failure()
-        run: docker compose logs
+        run: |
+          docker compose logs
+          # Also as an annotation, readable through the API when log downloads are blocked.
+          tail=$(docker compose logs --no-color --tail=40 api worker 2>&1 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+          echo "::error title=compose logs (api, worker)::$tail"
       - name: Stop the stack
         if: always()
         run: docker compose down -v

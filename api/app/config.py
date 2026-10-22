@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     cookie_secure: bool = False
     session_ttl_days: int = 7
 
+    # Load the seven demo stories, places and photos at start-up (python -m app.seed_demo).
+    seed_demo_data: bool = True
+
     # Staff accounts, created at start-up when both email and password are set.
     seed_admin_email: str = ""
     seed_admin_password: str = ""

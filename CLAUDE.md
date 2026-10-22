@@ -38,3 +38,17 @@ cd web && npm ci && npm run build
 ## Not built (out of scope)
 
 Persona chat, reels, the 360 viewer, analytics dashboards, the visit planner, real payments, Google sign-in, TOTP, email verification, scaling.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues for `lStarryskyl/Hikaya-app`, through the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.

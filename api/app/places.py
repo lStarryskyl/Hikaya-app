@@ -44,8 +44,26 @@ def find_source(folder: Path, slug: str) -> Path | None:
     )
 
 
+# Read by content, not by name: several catalogue photos are JPEGs saved as .png.
+_IMAGE_MAGIC = (
+    (b"\x89PNG\r\n\x1a\n", "png_pipe"),
+    (b"\xff\xd8\xff", "jpeg_pipe"),
+)
+
+
+def image_demuxer(path: Path) -> str | None:
+    """The FFmpeg demuxer for this image's real format, or None if it is not PNG/JPEG/WebP."""
+    head = path.read_bytes()[:12]
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "webp_pipe"
+    return next((demuxer for magic, demuxer in _IMAGE_MAGIC if head.startswith(magic)), None)
+
+
 async def convert(source: Path, slug: str, storage: LocalStorage) -> list[int]:
     """Write a WebP for every width that does not exist yet. Returns the widths available."""
+    demuxer = image_demuxer(source)
+    if demuxer is None:
+        raise RuntimeError(f"{source.name} is not a PNG, JPEG or WebP image")
     for width in WIDTHS:
         target = storage.path(photo_key(slug, width))
         if target.is_file():
@@ -53,7 +71,7 @@ async def convert(source: Path, slug: str, storage: LocalStorage) -> list[int]:
         target.parent.mkdir(parents=True, exist_ok=True)
         process = await asyncio.create_subprocess_exec(
             "ffmpeg", "-nostdin", "-v", "error", "-y",
-            "-protocol_whitelist", "file", "-f", "image2", "-i", str(source),
+            "-protocol_whitelist", "file", "-f", demuxer, "-i", str(source),
             "-vf", f"scale='min({width},iw)':-2", "-c:v", "libwebp", "-quality", "78",
             str(target),
             stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,

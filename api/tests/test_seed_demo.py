@@ -138,3 +138,24 @@ async def test_seed_keeps_curation_made_in_the_app(sessionmaker, session, photo_
     await session.refresh(petra)
     assert loom.curated_at is not None
     assert petra.curated_at is None
+
+
+async def test_a_jpeg_saved_with_a_png_name_still_converts(sessionmaker, tmp_path, client):
+    """Several catalogue files are JPEGs named .png; the real format decides how to read them."""
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=teal:s=1200x800",
+         "-frames:v", "1", "-f", "image2", "-c:v", "mjpeg", str(tmp_path / "aqaba.png")],
+        check=True,
+    )  # fmt: skip
+    assert (tmp_path / "aqaba.png").read_bytes()[:3] == b"\xff\xd8\xff"
+    await seed_demo(sessionmaker, tmp_path)
+    places = {p["name"]: p for p in (await client.get("/api/v1/places")).json()}
+    assert [p["slug"] for p in places["Aqaba"]["photos"]] == ["aqaba"]
+
+
+def test_an_unknown_image_format_is_refused(tmp_path):
+    from app.places import image_demuxer
+
+    odd = tmp_path / "odd.png"
+    odd.write_bytes(b"#EXTM3U\nfile:///etc/passwd\n")
+    assert image_demuxer(odd) is None

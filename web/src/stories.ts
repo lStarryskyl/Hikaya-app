@@ -144,8 +144,23 @@ export const submitStory = (id: string, consentVersion: string) =>
 
 export const getConsent = () => api<ConsentStatement>('/stories/consent')
 
-/** Limits the API enforces, shown before a member picks files. */
-export const PHOTO_LIMITS = { types: 'PNG, JPEG or WebP', maxMb: 15, maxCount: 12 }
+/** The limits the API checks uploads against, served so the page shows the same numbers. */
+export interface UploadLimits {
+  audio_max_mb: number
+  audio_max_minutes: number
+  photo_types: string[]
+  photo_max_mb: number
+  photos_per_story: number
+}
+
+let limitsRequest: Promise<UploadLimits> | null = null
+export function getLimits(): Promise<UploadLimits> {
+  limitsRequest ??= api<UploadLimits>('/stories/limits').catch((e) => {
+    limitsRequest = null
+    throw e
+  })
+  return limitsRequest
+}
 
 export function addPhoto(id: string, file: File) {
   const form = new FormData()

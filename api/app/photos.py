@@ -8,8 +8,8 @@ import uuid
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +18,7 @@ from app import places
 from app.auth import current_user_optional
 from app.config import get_settings
 from app.db import get_session
-from app.models import PlacePhoto, Story, StoryPhoto, User
+from app.models import PlacePhoto, Story, StoryPhoto, StoryStatus, User
 from app.places import WIDTHS, PhotoOut
 from app.storage import LocalStorage, TooLarge, get_storage
 from app.visibility import can_view
@@ -35,7 +35,9 @@ class StoryPhotoOut(BaseModel):
 
 
 class PhotoLimit(Exception):
-    """An upload broke a rule; carries the HTTP status and a plain message."""
+    """A photo request broke a rule (or named a missing photo): HTTP status + plain message.
+
+    An app-wide exception handler turns it into the response, so routes just let it rise."""
 
     def __init__(self, status: int, message: str) -> None:
         super().__init__(message)
@@ -81,7 +83,9 @@ async def list_for(session: AsyncSession, story_id: uuid.UUID) -> list[StoryPhot
     return [_out(r, gallery.get(r.place_photo_slug or "")) for r in rows]
 
 
-async def covers_for(session: AsyncSession, stories: list[Story]) -> dict:
+async def covers_for(
+    session: AsyncSession, stories: list[Story]
+) -> dict[uuid.UUID, PhotoOut | None]:
     """story id -> PhotoOut | None: the first story photo, else the place photo fallback."""
     rows = await _rows(session, [s.id for s in stories])
     first: dict[uuid.UUID, StoryPhoto] = {}
@@ -106,7 +110,11 @@ async def cover_out(session: AsyncSession, story: Story) -> PhotoOut | None:
 
 
 async def _check_room(session: AsyncSession, story: Story) -> int:
-    """The next position, or PhotoLimit when the story is full."""
+    """The next position, or PhotoLimit when the story is full.
+
+    Locks the story row until the caller commits, so two additions at once cannot take the
+    same position or both squeeze under the limit."""
+    await session.execute(select(Story.id).where(Story.id == story.id).with_for_update())
     count = len(await _rows(session, [story.id]))
     limit = get_settings().max_photos_per_story
     if count >= limit:
@@ -132,19 +140,28 @@ async def add_upload(
             413, f"Photos can be up to {settings.max_photo_upload_mb:g} MB each."
         ) from None
     try:
+        width, height = await places.image_size(storage.path(original_key))
+        if width * height > settings.max_photo_megapixels * 1_000_000:
+            raise PhotoLimit(
+                422, f"Photos can be up to {settings.max_photo_megapixels:g} megapixels."
+            )
         widths = await places.convert_image(
             storage.path(original_key),
             lambda w: _upload_key(photo_id, story.id, w),
             storage,
         )
+        row = StoryPhoto(id=photo_id, story_id=story.id, position=position, widths=widths)
+        session.add(row)
+        await session.commit()
     except places.NotAnImage:
         _delete_files(storage, photo_id, story.id)
         raise PhotoLimit(422, "That file is not a readable photo.") from None
+    except BaseException:
+        # Nothing may stay on disk without a row pointing at it.
+        _delete_files(storage, photo_id, story.id)
+        raise
     finally:
         storage.delete(original_key)  # only the WebP copies are kept
-    row = StoryPhoto(id=photo_id, story_id=story.id, position=position, widths=widths)
-    session.add(row)
-    await session.commit()
     return _out(row, None)
 
 
@@ -153,6 +170,8 @@ async def add_gallery_pick(session: AsyncSession, story: Story, slug: str) -> St
     if photo is None:
         raise PhotoLimit(404, "No such gallery photo.")
     position = await _check_room(session, story)
+    if any(r.place_photo_slug == slug for r in await _rows(session, [story.id])):
+        raise PhotoLimit(409, "That photo is already in your story.")
     row = StoryPhoto(story_id=story.id, position=position, place_photo_slug=slug)
     session.add(row)
     await session.commit()
@@ -163,7 +182,9 @@ def _delete_files(storage: LocalStorage, photo_id: uuid.UUID, story_id: uuid.UUI
     storage.delete(*(_upload_key(photo_id, story_id, w) for w in WIDTHS))
 
 
-async def remove(session: AsyncSession, story: Story, photo_id: uuid.UUID, storage) -> None:
+async def remove(
+    session: AsyncSession, story: Story, photo_id: uuid.UUID, storage: LocalStorage
+) -> None:
     row = await session.get(StoryPhoto, photo_id)
     if row is None or row.story_id != story.id:
         raise PhotoLimit(404, "No such photo.")
@@ -174,7 +195,9 @@ async def remove(session: AsyncSession, story: Story, photo_id: uuid.UUID, stora
         _delete_files(storage, row.id, story.id)
 
 
-async def _renumber(session: AsyncSession, story_id: uuid.UUID, exclude=None) -> None:
+async def _renumber(
+    session: AsyncSession, story_id: uuid.UUID, exclude: uuid.UUID | None = None
+) -> None:
     rows = [r for r in await _rows(session, [story_id]) if r.id != exclude]
     for i, r in enumerate(rows):
         r.position = i
@@ -208,5 +231,9 @@ async def serve_story_photo(
     path: Path = storage.path(_upload_key(row.id, story.id, width))
     if not path.is_file():
         raise HTTPException(404, "Not found.")
-    cache = "no-cache" if story.status == "published" else "private, no-store"
+    cache = "no-cache" if story.status == StoryStatus.PUBLISHED else "private, no-store"
     return FileResponse(path, media_type="image/webp", headers={"Cache-Control": cache})
+
+
+async def photo_limit_response(_request: Request, exc: PhotoLimit) -> JSONResponse:
+    return JSONResponse({"detail": exc.message}, status_code=exc.status)

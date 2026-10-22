@@ -251,6 +251,27 @@ async def create_story(
     return await to_out(session, story)
 
 
+class UploadLimits(BaseModel):
+    audio_max_mb: float
+    audio_max_minutes: float
+    photo_types: list[str]
+    photo_max_mb: float
+    photos_per_story: int
+
+
+@router.get("/limits", response_model=UploadLimits)
+async def upload_limits() -> UploadLimits:
+    """The limits uploads are checked against, so the page can show and pre-check them."""
+    settings = get_settings()
+    return UploadLimits(
+        audio_max_mb=settings.max_audio_upload_mb,
+        audio_max_minutes=settings.max_audio_minutes,
+        photo_types=sorted(photos.IMAGE_TYPES),
+        photo_max_mb=settings.max_photo_upload_mb,
+        photos_per_story=settings.max_photos_per_story,
+    )
+
+
 @router.get("/consent", response_model=ConsentStatement)
 async def consent_statement() -> ConsentStatement:
     """The rights statement to show before publishing, with the version to send back."""
@@ -404,10 +425,6 @@ async def submit_story(
     return await to_out(session, story)
 
 
-def _photo_error(exc: photos.PhotoLimit) -> HTTPException:
-    return HTTPException(exc.status, exc.message)
-
-
 @router.post("/{story_id}/photos", status_code=201, response_model=photos.StoryPhotoOut)
 async def add_photo(
     story_id: str,
@@ -418,10 +435,7 @@ async def add_photo(
 ) -> photos.StoryPhotoOut:
     story = await _own_story(session, story_id, user)
     _require_editable(story)
-    try:
-        return await photos.add_upload(session, story, file, storage)
-    except photos.PhotoLimit as exc:
-        raise _photo_error(exc) from None
+    return await photos.add_upload(session, story, file, storage)
 
 
 @router.post("/{story_id}/photos/gallery", status_code=201, response_model=photos.StoryPhotoOut)
@@ -433,10 +447,7 @@ async def pick_gallery_photo(
 ) -> photos.StoryPhotoOut:
     story = await _own_story(session, story_id, user)
     _require_editable(story)
-    try:
-        return await photos.add_gallery_pick(session, story, body.slug)
-    except photos.PhotoLimit as exc:
-        raise _photo_error(exc) from None
+    return await photos.add_gallery_pick(session, story, body.slug)
 
 
 @router.put("/{story_id}/photos/order", response_model=list[photos.StoryPhotoOut])
@@ -448,10 +459,7 @@ async def reorder_photos(
 ) -> list[photos.StoryPhotoOut]:
     story = await _own_story(session, story_id, user)
     _require_editable(story)
-    try:
-        await photos.reorder(session, story, body.ids)
-    except photos.PhotoLimit as exc:
-        raise _photo_error(exc) from None
+    await photos.reorder(session, story, body.ids)
     return await photos.list_for(session, story.id)
 
 
@@ -465,10 +473,7 @@ async def delete_photo(
 ) -> Response:
     story = await _own_story(session, story_id, user)
     _require_editable(story)
-    try:
-        await photos.remove(session, story, photo_id, storage)
-    except photos.PhotoLimit as exc:
-        raise _photo_error(exc) from None
+    await photos.remove(session, story, photo_id, storage)
     return Response(status_code=204)
 
 

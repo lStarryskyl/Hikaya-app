@@ -9,7 +9,7 @@ import TranscriptEditor from '../components/TranscriptEditor'
 import { ApiError } from '../api'
 import { getPlaces } from '../discover'
 import {
-  CATEGORY_LABELS, LANGUAGE_LABELS, createStory, formatDuration, getConsent, hasTranscript,
+  CATEGORY_LABELS, LANGUAGE_LABELS, createStory, formatDuration, getConsent, getLimits, hasTranscript,
   submitStory, updateStory, uploadAudio, type CategoryValue, type LanguageValue, type StoryRecord,
 } from '../stories'
 import { useApi } from '../useApi'
@@ -43,6 +43,7 @@ export default function CreateStoryPage() {
   const audioInputRef = useRef<HTMLInputElement>(null)
   const places = useApi(getPlaces, [])
   const consent = useApi(getConsent, [])
+  const limits = useApi(getLimits, [])
   const format = recordingFormat()
 
   const infoChips = [
@@ -98,6 +99,29 @@ export default function CreateStoryPage() {
       setPublishError(messageOf(err, 'Publishing failed. Please try again.'))
       setPublishing(false)
     }
+  }
+
+  // Asked in the photo step (so the gallery opens on it) and again before publishing.
+  function placeField() {
+    return (
+        <label className="block text-xs font-medium text-muted2">
+          Place
+          <input
+            required
+            maxLength={120}
+            list="hikaya-places"
+            value={placeName}
+            onChange={(e) => choosePlace(e.target.value)}
+            placeholder="A town, village or site"
+            className={fieldClass}
+          />
+          <datalist id="hikaya-places">
+            {(places.data ?? []).map((p) => (
+              <option key={p.slug} value={p.name} />
+            ))}
+          </datalist>
+        </label>
+    )
   }
 
   const canContinue =
@@ -212,7 +236,10 @@ export default function CreateStoryPage() {
             >
               <Cloud size={14} /> {uploading ? 'Uploading…' : draft?.audio ? 'Replace audio file' : 'Upload audio file'}
             </PillButton>
-            <p className="mt-2 text-[11px] text-muted">WebM, Ogg, MP3, M4A or WAV · up to 100 MB · up to 60 minutes</p>
+            <p className="mt-2 text-[11px] text-muted">
+              WebM, Ogg, MP3, M4A or WAV
+              {limits.data && ` · up to ${limits.data.audio_max_mb} MB · up to ${limits.data.audio_max_minutes} minutes`}
+            </p>
             {draft?.audio && (
               <p className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-teal-light px-3 py-1 text-xs font-medium text-teal">
                 <Check size={12} /> {audioName} · {formatDuration(draft.duration_ms)}
@@ -242,6 +269,9 @@ export default function CreateStoryPage() {
       {step === 3 && draft && (
         <div className="space-y-4 text-left">
           <div className="rounded-xl2 border border-border bg-panel p-6">
+            <div className="mb-4 max-w-xs">
+              {placeField()}
+            </div>
             <h3 className="font-serif text-lg">Add photos</h3>
             <p className="mb-4 text-xs text-muted">
               They become your story's slideshow. The first photo is the cover. Photos are optional.
@@ -297,23 +327,7 @@ export default function CreateStoryPage() {
                 ))}
               </select>
             </label>
-            <label className="block text-xs font-medium text-muted2">
-              Place
-              <input
-                required
-                maxLength={120}
-                list="hikaya-places"
-                value={placeName}
-                onChange={(e) => choosePlace(e.target.value)}
-                placeholder="A town, village or site"
-                className={fieldClass}
-              />
-              <datalist id="hikaya-places">
-                {(places.data ?? []).map((p) => (
-                  <option key={p.slug} value={p.name} />
-                ))}
-              </datalist>
-            </label>
+            {placeField()}
             {consent.data && (
               <label className="flex items-start gap-2 rounded-lg bg-cream p-3 text-xs leading-relaxed text-ink2">
                 <input
@@ -325,6 +339,11 @@ export default function CreateStoryPage() {
                 />
                 <span>{consent.data.text}</span>
               </label>
+            )}
+            {consent.error && (
+              <p role="alert" className="rounded-lg bg-terracotta-light px-3 py-2 text-sm text-terracotta-dark">
+                The rights statement could not be loaded, so publishing is not possible yet. Reload the page to try again.
+              </p>
             )}
             {publishError && (
               <p role="alert" className="rounded-lg bg-terracotta-light px-3 py-2 text-sm text-terracotta-dark">

@@ -63,6 +63,41 @@ class NotAnImage(Exception):
     pass
 
 
+FFMPEG_TIMEOUT_SECONDS = 120
+
+
+async def _run(*args: str) -> tuple[int, bytes, bytes]:
+    process = await asyncio.create_subprocess_exec(
+        *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+    )
+    try:
+        out, err = await asyncio.wait_for(process.communicate(), FFMPEG_TIMEOUT_SECONDS)
+    except TimeoutError:
+        process.kill()
+        await process.wait()
+        return -1, b"", b"timed out"
+    return process.returncode, out, err
+
+
+async def image_size(source: Path) -> tuple[int, int]:
+    """(width, height) from the image header, without decoding the picture."""
+    demuxer = image_demuxer(source)
+    if demuxer is None:
+        raise NotAnImage(f"{source.name} is not a PNG, JPEG or WebP image")
+    code, out, _ = await _run(
+        "ffprobe", "-v", "error", "-protocol_whitelist", "file", "-f", demuxer,
+        "-select_streams", "v:0", "-show_entries", "stream=width,height",
+        "-of", "csv=p=0", str(source),
+    )  # fmt: skip
+    try:
+        width, height = (int(n) for n in out.decode().strip().split(",")[:2])
+    except ValueError:
+        raise NotAnImage(f"{source.name} has no readable size") from None
+    if code != 0 or width <= 0 or height <= 0:
+        raise NotAnImage(f"{source.name} has no readable size")
+    return width, height
+
+
 async def convert(source: Path, slug: str, storage: LocalStorage) -> list[int]:
     """Place photo: write a WebP for every width not converted yet. Returns the widths."""
     return await convert_image(source, lambda width: photo_key(slug, width), storage)
@@ -82,15 +117,13 @@ async def convert_image(source: Path, key_for, storage: LocalStorage) -> list[in
         if target.is_file():
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
-        process = await asyncio.create_subprocess_exec(
+        code, _, err = await _run(
             "ffmpeg", "-nostdin", "-v", "error", "-y",
             "-protocol_whitelist", "file", "-f", demuxer, "-i", str(source),
             "-vf", f"scale='min({width},iw)':-2", "-c:v", "libwebp", "-quality", "78",
             str(target),
-            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
         )  # fmt: skip
-        _, err = await process.communicate()
-        if process.returncode != 0:
+        if code != 0:
             target.unlink(missing_ok=True)
             raise NotAnImage(f"could not convert {source.name}: {err.decode()[-300:]}")
     return list(WIDTHS)

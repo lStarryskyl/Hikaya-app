@@ -13,6 +13,7 @@ from app.auth import router as auth_router
 from app.config import get_settings
 from app.db import dispose_engine, get_session
 from app.discover import router as discover_router
+from app.photos import PhotoLimit, photo_limit_response
 from app.photos import media_router as story_photo_media_router
 from app.places import media_router as place_media_router
 from app.stories import media_router
@@ -26,6 +27,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="Hikaya API", version="0.1.0", lifespan=lifespan)
+
+app.add_exception_handler(PhotoLimit, photo_limit_response)
 
 app.add_middleware(
     CORSMiddleware,

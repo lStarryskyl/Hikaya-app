@@ -246,3 +246,48 @@ async def test_publishing_needs_the_current_rights_statement(client, sessionmake
     assert ok.status_code == 200, ok.text
     assert ok.json()["consent"]["version"] == current
     assert ok.json()["consent"]["at"] is not None
+
+
+async def test_two_uploads_at_once_cannot_pass_the_limit(client, images, monkeypatch):
+    import asyncio
+
+    monkeypatch.setattr(get_settings(), "max_photos_per_story", 1)
+    await sign_up(client)
+    story = await new_story(client)
+    results = await asyncio.gather(
+        add_photo(client, story["id"], images["png"]),
+        add_photo(client, story["id"], images["jpeg"], "image/jpeg"),
+    )
+    assert sorted(r.status_code for r in results) == [201, 409]
+    assert len(await photos_of(client, story["id"])) == 1
+
+
+async def test_the_same_gallery_photo_cannot_be_picked_twice(client, sessionmaker, tmp_path):
+    make_image(tmp_path / "petra-treasury.png")
+    await seed_demo(sessionmaker, tmp_path)
+    await sign_up(client)
+    story = await new_story(client)
+    path = f"/api/v1/stories/{story['id']}/photos/gallery"
+    assert (await client.post(path, json={"slug": "petra-treasury"})).status_code == 201
+    assert (await client.post(path, json={"slug": "petra-treasury"})).status_code == 409
+
+
+async def test_a_huge_image_is_refused_before_it_is_decoded(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(get_settings(), "max_photo_megapixels", 1)
+    await sign_up(client)
+    story = await new_story(client)
+    big = make_image(tmp_path / "big.png", size="1500x1000")
+    r = await add_photo(client, story["id"], big)
+    assert r.status_code == 422
+    assert "megapixels" in r.json()["detail"]
+
+
+async def test_upload_limits_are_published(client):
+    r = await client.get("/api/v1/stories/limits")
+    assert r.status_code == 200
+    body = r.json()
+    settings = get_settings()
+    assert body["photo_max_mb"] == settings.max_photo_upload_mb
+    assert body["photos_per_story"] == settings.max_photos_per_story
+    assert body["audio_max_mb"] == settings.max_audio_upload_mb
+    assert set(body["photo_types"]) == {"image/png", "image/jpeg", "image/webp"}

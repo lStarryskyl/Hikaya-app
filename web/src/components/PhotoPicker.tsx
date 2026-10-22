@@ -3,7 +3,7 @@ import { ArrowDown, ArrowUp, ImagePlus, X } from 'lucide-react'
 import { ApiError } from '../api'
 import { getPlaces } from '../discover'
 import {
-  PHOTO_LIMITS, addPhoto, deletePhoto, pickGalleryPhoto, reorderPhotos, type StoryPhoto,
+  addPhoto, deletePhoto, getLimits, pickGalleryPhoto, reorderPhotos, type StoryPhoto,
 } from '../stories'
 import { useApi } from '../useApi'
 import Photo from './Photo'
@@ -26,12 +26,23 @@ export default function PhotoPicker({
   placeHint?: string
 }) {
   const places = useApi(getPlaces, [])
+  const limits = useApi(getLimits, [])
   const [gallerySlug, setGallerySlug] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [dragOver, setDragOver] = useState(false)
   const input = useRef<HTMLInputElement>(null)
-  const full = photos.length >= PHOTO_LIMITS.maxCount
+  // The latest list, so a change that finishes later never builds on an older copy.
+  const latest = useRef(photos)
+  latest.current = photos
+  const maxCount = limits.data?.photos_per_story ?? 12
+  const full = photos.length >= maxCount
+  const blocked = busy || full || !limits.data
+
+  function commit(next: StoryPhoto[]) {
+    latest.current = next
+    onChange(next)
+  }
 
   const galleryPlace =
     places.data?.find((p) => p.slug === gallerySlug) ??
@@ -42,7 +53,7 @@ export default function PhotoPicker({
     setBusy(true)
     setError('')
     try {
-      onChange(await action())
+      commit(await action())
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'That did not work. Please try again.')
     } finally {
@@ -51,20 +62,31 @@ export default function PhotoPicker({
   }
 
   function upload(files: FileList | null) {
-    if (!files?.length) return
+    if (!files?.length || blocked || !limits.data) return
+    const { photo_types, photo_max_mb } = limits.data
+    // Check in the browser first, so a wrong or oversized file is never sent at all.
+    const bad = Array.from(files).find(
+      (f) => !photo_types.includes(f.type) || f.size > photo_max_mb * 1024 * 1024,
+    )
+    if (bad) {
+      setError(
+        photo_types.includes(bad.type)
+          ? `${bad.name} is larger than ${photo_max_mb} MB.`
+          : `${bad.name} is not a PNG, JPEG or WebP photo.`,
+      )
+      return
+    }
     void run(async () => {
-      let next = photos
       for (const file of Array.from(files)) {
-        if (next.length >= PHOTO_LIMITS.maxCount) break
-        next = [...next, await addPhoto(storyId, file)]
-        onChange(next)
+        if (latest.current.length >= maxCount) break
+        commit([...latest.current, await addPhoto(storyId, file)])
       }
-      return next
+      return latest.current
     })
   }
 
   function move(index: number, by: -1 | 1) {
-    const ids = photos.map((p) => p.id)
+    const ids = latest.current.map((p) => p.id)
     ;[ids[index], ids[index + by]] = [ids[index + by], ids[index]]
     void run(() => reorderPhotos(storyId, ids))
   }
@@ -89,7 +111,9 @@ export default function PhotoPicker({
         <ImagePlus size={28} className="mb-2 text-terracotta" />
         <p className="mb-1 text-sm text-ink2">Drag and drop your photos here</p>
         <p className="mb-3 text-[11px] text-muted">
-          {PHOTO_LIMITS.types} · up to {PHOTO_LIMITS.maxMb} MB each · up to {PHOTO_LIMITS.maxCount} photos
+          {limits.data
+            ? `PNG, JPEG or WebP · up to ${limits.data.photo_max_mb} MB each · up to ${maxCount} photos`
+            : limits.error || 'Loading the limits…'}
         </p>
         <input
           ref={input}
@@ -106,7 +130,7 @@ export default function PhotoPicker({
         <PillButton
           type="button"
           className="!py-2 text-xs disabled:opacity-50"
-          disabled={busy || full}
+          disabled={blocked}
           onClick={() => input.current?.click()}
         >
           {busy ? 'Saving…' : 'Choose photos'}
@@ -139,8 +163,10 @@ export default function PhotoPicker({
                 <button
                   key={p.slug}
                   type="button"
-                  disabled={busy || full || chosen}
-                  onClick={() => void run(async () => [...photos, await pickGalleryPhoto(storyId, p.slug)])}
+                  disabled={blocked || chosen}
+                  onClick={() =>
+                    void run(async () => [...latest.current, await pickGalleryPhoto(storyId, p.slug)])
+                  }
                   aria-label={chosen ? `${p.caption} (added)` : `Add ${p.caption}`}
                   className="relative shrink-0 overflow-hidden rounded-lg border border-border disabled:opacity-50"
                 >
@@ -190,7 +216,7 @@ export default function PhotoPicker({
                   onClick={() =>
                     void run(async () => {
                       await deletePhoto(storyId, p.id)
-                      return photos.filter((x) => x.id !== p.id)
+                      return latest.current.filter((x) => x.id !== p.id)
                     })
                   }
                   aria-label={`Remove photo ${i + 1}`}

@@ -113,7 +113,7 @@ These exist on purpose while the build is in progress. Each closes with the tick
 ## Creating a story
 
 - Recording uses the browser's own recorder (WebM/Opus, Ogg/Opus or MP4/AAC, whichever the browser supports) and the page names the real format. Blocked, missing, busy or unsupported microphones each get a plain message, and uploading a file always remains possible.
-- Photos are optional: uploads (PNG, JPEG or WebP, up to 15 MB each, read by their content) are stored as WebP at three widths; members can also pick photos from a place gallery. Up to 12 photos, in an order the member sets; the first is the cover. Removing a gallery pick never deletes the shared place photo.
+- Photos are optional: uploads (PNG, JPEG or WebP, up to 15 MB and 40 megapixels each, read by their content) are stored as WebP at three widths; members can also pick photos from a place gallery. Up to 12 photos, in an order the member sets; the first is the cover. Removing a gallery pick never deletes the shared place photo. The page reads the limits from the API, so they are set in one place.
 - The pin is set by clicking the map; typing a known place drops a starting pin there. The place name is free text.
 - Publishing needs agreement to the rights statement served by the API. The statement has a version; the story stores the version agreed to and when. Changing the wording means a new version.
 

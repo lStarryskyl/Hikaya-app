@@ -5,6 +5,7 @@ and to staff. Only the author edits, and only while the story is a draft or need
 Anything a caller may not see answers 404, so drafts do not leak their existence.
 """
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated
@@ -12,7 +13,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, StringConstraints
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import audio, consent, moderation, photos, pipeline, places
@@ -23,6 +24,7 @@ from app.models import (
     Asset,
     AssetKind,
     Category,
+    Job,
     Language,
     Story,
     StoryStatus,
@@ -233,8 +235,8 @@ def _moderation_out(result) -> ModerationOut | None:
     )
 
 
-async def to_out(session: AsyncSession, story: Story, *, private: bool = True) -> StoryOut:
-    """`private` adds moderation and review details; only for the author and staff."""
+async def to_out(session: AsyncSession, story: Story, *, private: bool = False) -> StoryOut:
+    """`private` adds moderation and review details; pass it only for the author and staff."""
     author = await session.get(User, story.author_id)
     assets = await _audio_assets(session, story.id)
     playable, original = assets.get(AssetKind.AUDIO), assets.get(AssetKind.ORIGINAL_AUDIO)
@@ -275,7 +277,8 @@ async def to_out(session: AsyncSession, story: Story, *, private: bool = True) -
     )
     if private:
         out.moderation = _moderation_out(await moderation.latest(session, story.id))
-        if story.review_note or story.reviewed_at:
+        # The reviewer's note matters only while the author is asked to make changes.
+        if story.status == StoryStatus.NEEDS_EDIT:
             out.review = ReviewOut(note=story.review_note, at=story.reviewed_at)
     return out
 
@@ -300,7 +303,7 @@ async def create_story(
     session.add(story)
     await session.commit()
     await session.refresh(story)
-    return await to_out(session, story)
+    return await to_out(session, story, private=True)
 
 
 class UploadLimits(BaseModel):
@@ -356,7 +359,7 @@ async def edit_story(
     if story.original_language != language_before:
         await pipeline.start(session, story)
     await session.refresh(story)
-    return await to_out(session, story)
+    return await to_out(session, story, private=True)
 
 
 @router.put("/{story_id}/audio", response_model=StoryOut)
@@ -435,7 +438,7 @@ async def upload_audio(
     storage.delete(*(asset.storage_key for asset in old.values()))
     await pipeline.start(session, story)
     await session.refresh(story)
-    return await to_out(session, story)
+    return await to_out(session, story, private=True)
 
 
 def missing_for_publishing(
@@ -477,10 +480,13 @@ async def submit_story(
         raise HTTPException(422, "Agree to the current rights statement before publishing.")
     story.consent_version, story.consented_at = consent.VERSION, datetime.now(UTC)
     # Checked in the background: published if no label is raised, otherwise held for staff.
-    await moderation.submit(session, story)
+    try:
+        await moderation.submit(session, story)
+    except moderation.TextNotReady as e:
+        raise HTTPException(422, str(e)) from e
     await session.commit()
     await session.refresh(story)
-    return await to_out(session, story)
+    return await to_out(session, story, private=True)
 
 
 @router.post("/{story_id}/photos", status_code=201, response_model=photos.StoryPhotoOut)
@@ -546,8 +552,10 @@ async def delete_story(
     story = await _own_story(session, story_id, user)
     folder = f"stories/{story.id}"
     await session.delete(story)  # rows that belong to it go with it (ON DELETE CASCADE)
+    # Jobs point at stories only through their payload, so they are removed by hand.
+    await session.execute(delete(Job).where(Job.payload["story_id"].astext == str(story.id)))
     await session.commit()
-    storage.delete_tree(folder)
+    await asyncio.to_thread(storage.delete_tree, folder)
     return Response(status_code=204)
 
 
@@ -610,7 +618,7 @@ async def edit_layer(
     except pipeline.Misaligned:
         raise HTTPException(422, "Keep exactly one text for each line.") from None
     await session.refresh(story)
-    return await to_out(session, story)
+    return await to_out(session, story, private=True)
 
 
 @media_router.api_route("/media/{asset_id}", methods=["GET", "HEAD"], include_in_schema=False)
@@ -652,12 +660,13 @@ async def my_stories(
         ).scalars()
     )
     covers = await photos.covers_for(session, stories)
+    results = await moderation.latest_for(
+        session, [s.id for s in stories if s.status == StoryStatus.HELD]
+    )
     out = []
     for story in stories:
-        held_for: list[str] = []
-        if story.status == StoryStatus.HELD:
-            result = await moderation.latest(session, story.id)
-            held_for = [k for k, v in (result.labels if result else {}).items() if v["raised"]]
+        result = results.get(story.id)
+        held_for = [k for k, v in (result.labels if result else {}).items() if v["raised"]]
         out.append(
             MyStory(
                 id=story.id,

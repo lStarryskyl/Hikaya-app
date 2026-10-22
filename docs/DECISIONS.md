@@ -112,9 +112,9 @@ These exist on purpose while the build is in progress. Each closes with the tick
 ## Moderation
 
 - Submitting moves a story to `moderating` and queues the check as a pipeline step, so a failure shows in its progress and can be retried. The language model labels the polished text and the English translation for `hate`, `violence`, `sexual` and `other_terrible`, each with a short reason.
-- No raised label publishes the story at once; any raised label puts it in `held`. Every check is stored with its labels and the hash of the text it judged.
+- No raised label publishes the story at once; any raised label puts it in `held`. Every check is stored with its labels and the exact text it judged. Submitting waits until the latest English translation has finished, so an older translation is never judged, and every submission is checked, even when the text has not changed. A staff decision made while a check runs is never overwritten.
 - Staff send a story back with a note (`needs_edit`, #11); the author edits and resubmits, which runs the check again. Held and needs-edit stories are visible only to the author and staff, and moderation details are never shown to anyone else.
-- "My stories" lists every story of the member with its status, why it was held, and the reviewer's note. The author can delete a story in any status; its rows and files are removed.
+- "My stories" lists every story of the member with its status, why it was held, and the reviewer's note. The author can delete a story in any status; its rows, queued jobs and files are removed.
 - The fake language model raises labels on marker words (for example "kill" for violence, "hateful" for hate), so rehearsals and tests are predictable.
 
 ## Creating a story

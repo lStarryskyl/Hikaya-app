@@ -21,6 +21,7 @@ def upgrade() -> None:
         sa.Column("story_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("labels", postgresql.JSONB(), nullable=False),
         sa.Column("held", sa.Boolean(), nullable=False),
+        sa.Column("texts", postgresql.JSONB(), nullable=False),
         sa.Column("text_hash", sa.Text(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.ForeignKeyConstraint(["story_id"], ["stories.id"], ondelete="CASCADE", name="fk_moderation_results_story_id"),

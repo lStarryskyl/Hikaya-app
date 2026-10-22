@@ -7,6 +7,7 @@ import PhotoPicker from '../components/PhotoPicker'
 import Recorder, { recordingFormat } from '../components/Recorder'
 import TranscriptEditor from '../components/TranscriptEditor'
 import { ApiError } from '../api'
+import { useAuth } from '../auth'
 import { getPlaces } from '../discover'
 import {
   CATEGORY_LABELS, LANGUAGE_LABELS, createStory, formatDuration, getConsent, getLimits, getStory,
@@ -49,15 +50,17 @@ export default function CreateStoryPage() {
   const [params] = useSearchParams()
   const resumeId = params.get('story')
   const [resumeError, setResumeError] = useState('')
+  const { user } = useAuth()
 
   // /create?story=<id> picks up a draft, or a story a reviewer sent back, where it was left.
   useEffect(() => {
-    if (!resumeId) return
+    if (!resumeId || !user) return
     let cancelled = false
     getStory(resumeId)
       .then((story) => {
         if (cancelled) return
-        if (story.status !== 'draft' && story.status !== 'needs_edit') {
+        // Only the author continues a story; staff and others see it on its own page.
+        if (story.author.id !== user.id || (story.status !== 'draft' && story.status !== 'needs_edit')) {
           navigate(`/story/${story.id}`, { replace: true })
           return
         }
@@ -77,7 +80,7 @@ export default function CreateStoryPage() {
     return () => {
       cancelled = true
     }
-  }, [resumeId, navigate])
+  }, [resumeId, navigate, user])
 
   const infoChips = [
     { icon: Music, label: 'Recording format', value: format?.label ?? 'Upload only' },
@@ -154,6 +157,15 @@ export default function CreateStoryPage() {
             ))}
           </datalist>
         </label>
+    )
+  }
+
+  // Until a resumed story has loaded, nothing can be typed that its arrival would overwrite.
+  if (resumeId && draft?.id !== resumeId && !resumeError) {
+    return (
+      <div className="mx-auto max-w-3xl px-6 py-14 text-center text-sm text-muted2" role="status">
+        Opening your story…
+      </div>
     )
   }
 

@@ -402,6 +402,8 @@ class ModerationResult(Base):
     # {"hate": {"raised": false, "reason": ""}, ...}
     labels: Mapped[dict] = mapped_column(JSONB, nullable=False)
     held: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    # The exact texts that were judged, so staff can see what the verdict was about.
+    texts: Mapped[list] = mapped_column(JSONB, nullable=False)
     text_hash: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

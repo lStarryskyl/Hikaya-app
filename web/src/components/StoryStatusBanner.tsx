@@ -1,7 +1,9 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { AlertTriangle, Clock, FilePen, Loader2 } from 'lucide-react'
-import { MODERATION_LABELS, getStory, type StoryRecord } from '../stories'
+import { ApiError } from '../api'
+import { MODERATION_LABELS, getPipeline, getStory, retryStep, type StoryRecord } from '../stories'
+import { PillButton } from './ui'
 
 const POLL_MS = 2000
 
@@ -16,30 +18,56 @@ export default function StoryStatusBanner({
   story: StoryRecord
   onChange: (story: StoryRecord) => void
 }) {
-  // While the check runs, look again every few seconds until the result is in.
+  // Set when the check itself failed (the provider was down, say): polling stops until a retry.
+  const [failure, setFailure] = useState('')
+  const [retrying, setRetrying] = useState(false)
+  const [round, setRound] = useState(0)
+
+  // While the check runs, look again every few seconds until the result is in. Each look
+  // waits for the previous one, so slow answers never pile up.
   useEffect(() => {
     if (story.status !== 'moderating') return
     let stopped = false
-    const timer = window.setInterval(async () => {
+    let timer: number | undefined
+    async function look() {
       try {
         const fresh = await getStory(story.id)
-        if (!stopped && fresh.status !== 'moderating') onChange(fresh)
+        if (stopped) return
+        if (fresh.status !== 'moderating') return onChange(fresh)
+        const step = (await getPipeline(story.id)).steps.find((s) => s.step === 'moderate')
+        if (stopped) return
+        if (step?.status === 'failed') return setFailure(step.message)
       } catch {
-        /* keep the current banner; the next tick tries again */
+        /* keep the current banner; the next look tries again */
       }
-    }, POLL_MS)
+      if (!stopped) timer = window.setTimeout(look, POLL_MS)
+    }
+    timer = window.setTimeout(look, POLL_MS)
     return () => {
       stopped = true
-      window.clearInterval(timer)
+      window.clearTimeout(timer)
     }
-  }, [story.id, story.status, onChange])
+  }, [story.id, story.status, onChange, round])
+
+  async function retry() {
+    setRetrying(true)
+    try {
+      await retryStep(story.id, 'moderate')
+      setFailure('')
+      setRound((r) => r + 1)
+    } catch (e) {
+      setFailure(e instanceof ApiError ? e.message : 'That did not work. Please try again.')
+    } finally {
+      setRetrying(false)
+    }
+  }
 
   if (story.status === 'published') return null
 
   const raised = story.moderation?.labels.filter((l) => l.raised) ?? []
-  const editLink = (
+  const editLink = (label: string) => (
     <Link to={`/create?story=${story.id}`} className="font-semibold text-terracotta hover:underline">
-      Edit and resubmit
+      {label}
     </Link>
   )
 
@@ -49,15 +77,30 @@ export default function StoryStatusBanner({
       title: 'This story is a draft',
       body: (
         <>
-          Only you can see it. <Link to={`/create?story=${story.id}`} className="font-semibold text-terracotta hover:underline">Continue editing</Link>
+          Only you can see it. {editLink('Continue editing')}
         </>
       ),
     },
-    moderating: {
-      icon: <Loader2 size={16} className="animate-spin" />,
-      title: 'We are checking your story',
-      body: 'It will be published in a moment if nothing needs a closer look.',
-    },
+    moderating: failure
+      ? {
+          icon: <AlertTriangle size={16} />,
+          title: 'The check could not finish',
+          body: (
+            <>
+              <span role="alert">{failure}</span>
+              <div className="mt-2">
+                <PillButton type="button" className="!py-1.5 text-xs" disabled={retrying} onClick={() => void retry()}>
+                  {retrying ? 'Trying again…' : 'Try again'}
+                </PillButton>
+              </div>
+            </>
+          ),
+        }
+      : {
+          icon: <Loader2 size={16} className="animate-spin" />,
+          title: 'We are checking your story',
+          body: 'It will be published in a moment if nothing needs a closer look.',
+        },
     held: {
       icon: <Clock size={16} />,
       title: 'Your story is under review',
@@ -83,7 +126,7 @@ export default function StoryStatusBanner({
       body: (
         <>
           {story.review?.note ? <q className="block italic">{story.review.note}</q> : 'Please review your story.'}
-          <div className="mt-2">{editLink}</div>
+          <div className="mt-2">{editLink('Edit and resubmit')}</div>
         </>
       ),
     },

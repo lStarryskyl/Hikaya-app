@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Bookmark,
@@ -8,12 +9,13 @@ import {
 } from 'lucide-react'
 import { Badge, Card, PillButton } from '../components/ui'
 import Photo from '../components/Photo'
+import { ApiError } from '../api'
 import { initials, useAuth } from '../auth'
 import { findPhoto, getFeed, getPlaces } from '../discover'
-import { useState } from 'react'
 import {
   MODERATION_LABELS, STATUS_LABELS, deleteStory, formatDuration, getMyStories, type StoryStatus,
 } from '../stories'
+import { useApi } from '../useApi'
 
 const STATUS_TONE: Record<StoryStatus, 'terracotta' | 'gold' | 'teal'> = {
   draft: 'gold',
@@ -22,30 +24,39 @@ const STATUS_TONE: Record<StoryStatus, 'terracotta' | 'gold' | 'teal'> = {
   held: 'terracotta',
   needs_edit: 'terracotta',
 }
-import { useApi } from '../useApi'
 
 export default function ProfilePage() {
   const { user } = useAuth()
   const feed = useApi(() => getFeed({ limit: 100 }), [])
   const places = useApi(getPlaces, [])
   const stories = feed.data?.items ?? []
-  // Published stories only; drafts and stories under review get their own list in #10.
   const [refresh, setRefresh] = useState(0)
   const mine = useApi(getMyStories, [refresh])
   const [confirming, setConfirming] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState('')
   const published = (mine.data ?? []).filter((s) => s.status === 'published').length
 
-  // Deleting asks twice on the same button, so nothing is removed by a single slip.
+  // Deleting asks twice on the same button, so nothing is removed by a single slip. The
+  // second click must come within a few seconds; after that the button asks again.
+  useEffect(() => {
+    if (!confirming) return
+    const timer = window.setTimeout(() => setConfirming(null), 4000)
+    return () => window.clearTimeout(timer)
+  }, [confirming])
+
   async function remove(id: string) {
     if (confirming !== id) {
       setConfirming(id)
       return
     }
     setDeleting(id)
+    setDeleteError('')
     try {
       await deleteStory(id)
       setRefresh((n) => n + 1)
+    } catch (e) {
+      setDeleteError(e instanceof ApiError ? e.message : 'The story could not be deleted. Please try again.')
     } finally {
       setDeleting(null)
       setConfirming(null)
@@ -137,6 +148,11 @@ export default function ProfilePage() {
           </Link>
         </div>
         {mine.error && <p className="text-sm text-terracotta-dark">{mine.error}</p>}
+        {deleteError && (
+          <p role="alert" className="rounded-lg bg-terracotta-light px-3 py-2 text-sm text-terracotta-dark">
+            {deleteError}
+          </p>
+        )}
         {mine.data && mine.data.length === 0 && (
           <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted2">
             You have not recorded a story yet.

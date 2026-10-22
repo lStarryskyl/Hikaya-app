@@ -309,3 +309,109 @@ async def test_only_the_author_deletes(client, sessionmaker, tone):
     assert (await client.delete(f"/api/v1/stories/{story_id}")).status_code == 404
     client.cookies.clear()
     assert (await client.delete(f"/api/v1/stories/{story_id}")).status_code == 401
+
+
+async def test_resubmitting_unchanged_text_runs_the_check_again(
+    client, sessionmaker, session, tone
+):
+    await sign_up(client)
+    story_id = await ready_story(client, sessionmaker, tone)
+    await submit(client, story_id)
+    await drain(sessionmaker)
+    await reject(session, story_id, "Change the title, please.")
+    await client.patch(f"/api/v1/stories/{story_id}", json={"title": "A better title"})
+    r = await submit(client, story_id)
+    assert r.json()["status"] == "moderating"
+    assert await drain(sessionmaker) >= 1
+    assert (await client.get(f"/api/v1/stories/{story_id}")).json()["status"] == "published"
+
+
+async def test_submitting_waits_for_the_latest_english_translation(client, sessionmaker, tone):
+    await sign_up(client)
+    story_id = await ready_story(client, sessionmaker, tone)
+    # A new polished text queues a new English translation; the old one must not be judged.
+    await edit(client, story_id, "polished", "نص جديد.")
+    r = await submit(client, story_id)
+    assert r.status_code == 422
+    assert "English translation" in r.json()["detail"]
+
+
+async def test_the_result_keeps_the_text_it_judged(client, sessionmaker, tone, session):
+    from app.models import ModerationResult
+
+    await sign_up(client)
+    story_id = await ready_story(client, sessionmaker, tone)
+    await edit(client, story_id, "translation_en", "A line about a weapon.")
+    await submit(client, story_id)
+    await drain(sessionmaker)
+    result = (await session.execute(select(ModerationResult))).scalar_one()
+    assert "A line about a weapon." in result.texts
+
+
+async def test_moderation_details_are_for_the_author_and_staff_only(
+    client, sessionmaker, session, tone
+):
+    from app.models import Role
+    from app.seed_staff import StaffSeed, seed_staff
+
+    await sign_up(client)
+    story_id = await ready_story(client, sessionmaker, tone)
+    await submit(client, story_id)
+    path = f"/api/v1/stories/{story_id}"
+    client.cookies.clear()
+    assert (await client.get(path)).status_code == 404  # moderating is private
+    await seed_staff(
+        sessionmaker, [StaffSeed("rev@example.com", PASSWORD, Role.REVIEWER, "Reviewer")]
+    )
+    await client.post("/api/v1/auth/login", json={"email": "rev@example.com", "password": PASSWORD})
+    await drain(sessionmaker)
+    await reject(session, story_id, "note for the author")
+    seen = (await client.get(path)).json()
+    assert seen["status"] == "needs_edit"
+    assert seen["review"]["note"] == "note for the author"
+
+
+async def test_a_staff_decision_during_the_check_is_not_overwritten(
+    client, sessionmaker, session, tone, monkeypatch
+):
+    await sign_up(client)
+    story_id = await ready_story(client, sessionmaker, tone)
+    await submit(client, story_id)
+    original = fake.FakeLanguageModel.moderate
+
+    async def slow(self, texts):
+        await reject(session, story_id, "Decided while the check ran.")
+        return await original(self, texts)
+
+    monkeypatch.setattr(fake.FakeLanguageModel, "moderate", slow)
+    await drain(sessionmaker)
+    assert (await client.get(f"/api/v1/stories/{story_id}")).json()["status"] == "needs_edit"
+
+
+async def test_deleting_also_removes_jobs_and_results(client, sessionmaker, session, tone):
+    await sign_up(client)
+    story_id = await ready_story(client, sessionmaker, tone)
+    await submit(client, story_id)
+    await drain(sessionmaker)
+    await client.delete(f"/api/v1/stories/{story_id}")
+    jobs = (
+        await session.execute(
+            text("SELECT count(*) FROM jobs WHERE payload->>'story_id' = :id"), {"id": story_id}
+        )
+    ).scalar_one()
+    results = (await session.execute(text("SELECT count(*) FROM moderation_results"))).scalar_one()
+    assert jobs == 0 and results == 0
+
+
+async def test_the_review_note_shows_only_while_edits_are_needed(
+    client, sessionmaker, session, tone
+):
+    await sign_up(client)
+    story_id = await ready_story(client, sessionmaker, tone)
+    await reject(session, story_id, "Please fix the title.")
+    assert (await client.get(f"/api/v1/stories/{story_id}")).json()["review"]["note"]
+    await submit(client, story_id)
+    await drain(sessionmaker)
+    story = (await client.get(f"/api/v1/stories/{story_id}")).json()
+    assert story["status"] == "published"
+    assert story["review"] is None

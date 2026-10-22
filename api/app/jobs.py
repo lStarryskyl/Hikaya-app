@@ -23,8 +23,13 @@ async def enqueue(
     idempotency_key: str | None = None,
     max_attempts: int = 3,
     run_after: datetime | None = None,
+    commit: bool = True,
 ) -> Job:
-    """Add a job. With an idempotency key, a repeat call returns the existing job."""
+    """Add a job. With an idempotency key, a repeat call returns the existing job.
+
+    `commit=False` leaves the transaction open, so the caller can record what the job is
+    for in the same commit (a worker must never see the job without that record).
+    """
     values: dict = {"kind": kind, "payload": payload or {}, "max_attempts": max_attempts}
     if idempotency_key is not None:
         values["idempotency_key"] = idempotency_key
@@ -39,8 +44,27 @@ async def enqueue(
         job = (
             await session.execute(select(Job).where(Job.idempotency_key == idempotency_key))
         ).scalar_one()
-    await session.commit()
+    if commit:
+        await session.commit()
     return job
+
+
+async def requeue(session: AsyncSession, job_id) -> bool:
+    """Give a failed job a fresh set of attempts. False if it was not failed."""
+    result = await session.execute(
+        update(Job)
+        .where(Job.id == job_id, Job.status == JobStatus.FAILED)
+        .values(
+            status=JobStatus.QUEUED,
+            attempts=0,
+            run_after=func.now(),
+            error=None,
+            finished_at=None,
+            locked_at=None,
+        )
+    )
+    await session.commit()
+    return (result.rowcount or 0) == 1
 
 
 async def claim_next(session: AsyncSession) -> Job | None:

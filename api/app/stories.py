@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import audio
+from app import audio, pipeline
 from app.auth import current_user, current_user_optional
 from app.config import get_settings
 from app.db import get_session
@@ -61,6 +61,37 @@ class AudioOut(BaseModel):
     original_url: str
 
 
+class SegmentOut(BaseModel):
+    start_ms: int
+    end_ms: int
+    text: str
+
+
+class LayerOut(BaseModel):
+    kind: str
+    language: str
+    edited: bool
+    segments: list[SegmentOut]
+
+
+class StepOut(BaseModel):
+    step: str
+    status: str
+    message: str
+
+
+class PipelineOut(BaseModel):
+    steps: list[StepOut]
+    complete: bool
+
+
+SegmentText = Annotated[str, StringConstraints(max_length=pipeline.MAX_SEGMENT_CHARS)]
+
+
+class LayerEdit(BaseModel):
+    texts: list[SegmentText]
+
+
 class StoryOut(BaseModel):
     id: uuid.UUID
     title: str
@@ -75,6 +106,7 @@ class StoryOut(BaseModel):
     created_at: datetime
     author: AuthorOut
     audio: AudioOut | None
+    layers: list[LayerOut]
 
 
 def media_url(asset: Asset) -> str:
@@ -97,6 +129,17 @@ def _parse_id(raw: str) -> uuid.UUID:
 async def _visible_story(session: AsyncSession, story_id: str, user: User | None) -> Story:
     story = await session.get(Story, _parse_id(story_id))
     if story is None or not can_view(story, user):
+        raise HTTPException(404, "Story not found.")
+    return story
+
+
+async def _own_or_staff_story(session: AsyncSession, story_id: str, user: User | None) -> Story:
+    story = await session.get(Story, _parse_id(story_id))
+    if (
+        story is None
+        or user is None
+        or not (user.id == story.author_id or user.role in STAFF_ROLES)
+    ):
         raise HTTPException(404, "Story not found.")
     return story
 
@@ -148,6 +191,10 @@ async def to_out(session: AsyncSession, story: Story) -> StoryOut:
         created_at=story.created_at,
         author=AuthorOut(id=author.id, display_name=author.display_name),
         audio=audio_out,
+        layers=[
+            LayerOut(kind=la.kind, language=la.language, edited=la.edited, segments=la.segments)
+            for la in await pipeline.layers(session, story.id)
+        ],
     )
 
 
@@ -190,8 +237,11 @@ async def edit_story(
 ) -> StoryOut:
     story = await _own_story(session, story_id, user)
     _require_editable(story)
+    language_before = story.original_language
     _apply(story, body)
     await session.commit()
+    if story.original_language != language_before:
+        await pipeline.start(session, story)
     await session.refresh(story)
     return await to_out(session, story)
 
@@ -270,11 +320,12 @@ async def upload_audio(
         raise
     # Old files go only after the database no longer points at them.
     storage.delete(*(asset.storage_key for asset in old.values()))
+    await pipeline.start(session, story)
     await session.refresh(story)
     return await to_out(session, story)
 
 
-def missing_for_publishing(story: Story, has_audio: bool) -> list[str]:
+def missing_for_publishing(story: Story, has_audio: bool, has_transcript: bool) -> list[str]:
     checks = [
         ("title", bool(story.title)),
         ("category", story.category is not None),
@@ -282,6 +333,7 @@ def missing_for_publishing(story: Story, has_audio: bool) -> list[str]:
         ("map pin", story.latitude is not None and story.longitude is not None),
         ("language", story.original_language is not None),
         ("audio", has_audio),
+        ("transcript (still being prepared)", has_transcript),
     ]
     return [name for name, ok in checks if not ok]
 
@@ -294,13 +346,69 @@ async def submit_story(
 ) -> StoryOut:
     story = await _own_story(session, story_id, user)
     _require_editable(story)
-    missing = missing_for_publishing(story, bool(await _audio_assets(session, story.id)))
+    kinds = {layer.kind for layer in await pipeline.layers(session, story.id)}
+    missing = missing_for_publishing(
+        story,
+        bool(await _audio_assets(session, story.id)),
+        {pipeline.VERBATIM, pipeline.POLISHED} <= kinds,
+    )
     if missing:
         raise HTTPException(422, "Add these before publishing: " + ", ".join(missing) + ".")
     # Moderation arrives in a later ticket; until then a complete story publishes at once.
     story.status = StoryStatus.PUBLISHED.value
     story.published_at = datetime.now(UTC)
     await session.commit()
+    await session.refresh(story)
+    return await to_out(session, story)
+
+
+@router.get("/{story_id}/pipeline", response_model=PipelineOut)
+async def pipeline_status(
+    story_id: str,
+    user: User | None = Depends(current_user_optional),
+    session: AsyncSession = Depends(get_session),
+) -> PipelineOut:
+    story = await _own_or_staff_story(session, story_id, user)
+    steps, complete = await pipeline.status(session, story)
+    return PipelineOut(
+        steps=[StepOut(step=s.step, status=s.status, message=s.message) for s in steps],
+        complete=complete,
+    )
+
+
+@router.post("/{story_id}/pipeline/{step}/retry", response_model=PipelineOut)
+async def retry_step(
+    story_id: str,
+    step: str,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> PipelineOut:
+    story = await _own_story(session, story_id, user)
+    if step not in pipeline.STEPS:
+        raise HTTPException(404, "No such step.")
+    if not await pipeline.retry(session, story, step):
+        raise HTTPException(409, "Only a failed step can be retried.")
+    return await pipeline_status(story_id, user, session)
+
+
+@router.patch("/{story_id}/layers/{kind}", response_model=StoryOut)
+async def edit_layer(
+    story_id: str,
+    kind: str,
+    body: LayerEdit,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> StoryOut:
+    story = await _own_story(session, story_id, user)
+    if kind not in pipeline.LAYER_KINDS:
+        raise HTTPException(404, "No such text layer.")
+    _require_editable(story)
+    try:
+        await pipeline.edit_layer(session, story, kind, body.texts)
+    except pipeline.LayerNotReady:
+        raise HTTPException(409, "This text is not ready yet.") from None
+    except pipeline.Misaligned:
+        raise HTTPException(422, "Keep exactly one text for each line.") from None
     await session.refresh(story)
     return await to_out(session, story)
 

@@ -97,12 +97,20 @@ These exist on purpose while the build is in progress. Each closes with the tick
 
 - Submitting a complete story publishes it at once, with no moderation (until #10).
 - The place is picked from a short list of towns with fixed coordinates (until the map-click pin in #7).
+- Transcription, polishing, translation and narration use fake providers by default; the real ones arrive with #12, #13 and #14, and the defaults then return to ElevenLabs and Azure as above.
 - The player still shows mock content for the old sample-story links, and mock reflections and "Up next" (until #6).
 
 ## Media
 
 - Every upload is kept untouched. Playback uses a constant-bitrate mono MP3 copy of the same recording, because every browser (including open-source Chromium, which has no AAC) plays MP3 and every speech provider accepts it.
 - FFmpeg reads each upload with the demuxer for its declared type and only the `file` protocol, so it never guesses a format from the content.
+
+## Text pipeline
+
+- The member chooses the spoken language before uploading. Transcription starts as soon as the recording is uploaded; polishing follows, then the translations, each as its own job.
+- Each step records a hash of its input. A new recording or a new language starts over from transcription and clears the old text. Editing the original words re-runs polishing and the translations; editing the polished text re-runs only the translations; editing a translation re-runs nothing. A result made from outdated input is dropped.
+- Publishing needs the original words and the polished text. Translations may still be running.
+- Failed steps show a plain message; unexpected errors never show their internal detail. A failed step can be retried from the Transcript step.
 
 ## Defaults I assumed (confirm or change)
 

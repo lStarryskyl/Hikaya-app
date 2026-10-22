@@ -13,7 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app import jobs
 from app.config import get_settings
 from app.db import dispose_engine, get_sessionmaker
+from app.errors import UserFacingError
 from app.handlers import HANDLERS, Handler
+
+# Importing the pipeline registers its job handlers.
+from app.pipeline import INTERNAL_PREFIX
 
 log = logging.getLogger("hikaya.worker")
 
@@ -36,7 +40,13 @@ async def run_one(
             result = await fn(job.payload)
         except Exception as exc:  # a handler failure must never kill the worker
             log.exception("job %s failed", job.id)
-            await jobs.mark_failed(session, job, f"{type(exc).__name__}: {exc}")
+            # A member sees the error text, so only deliberate messages pass through.
+            error = (
+                str(exc)
+                if isinstance(exc, UserFacingError)
+                else f"{INTERNAL_PREFIX}{type(exc).__name__}: {exc}"
+            )
+            await jobs.mark_failed(session, job, error)
             return True
         cost = Decimal(str(result.pop("provider_cost_usd", 0)))
         await jobs.mark_done(session, job.id, result, cost)

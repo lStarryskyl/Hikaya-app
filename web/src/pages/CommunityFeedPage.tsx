@@ -35,7 +35,7 @@ export default function CommunityFeedPage() {
         </div>
       </div>
 
-      <div className="grid lg:grid-cols-[1fr_300px] gap-6">
+      <div className="grid lg:grid-cols-[minmax(0,1fr)_300px] gap-6">
         <div>
           <div className="flex gap-4 overflow-x-auto pb-4 mb-2 border-b border-border scrollbar-thin">
             {places.map((p) => (

@@ -1,0 +1,68 @@
+# Four containers: db, api, worker, web. Run with: docker compose up --build
+# Copy .env.example to .env first if you want to set keys or change defaults.
+
+x-api-env: &api-env
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-hikaya}:${POSTGRES_PASSWORD:-hikaya}@db:5432/${POSTGRES_DB:-hikaya}
+  MEDIA_DIR: /data/media
+  CORS_ORIGINS: '["http://localhost:5173"]'
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hikaya}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hikaya}
+      POSTGRES_DB: ${POSTGRES_DB:-hikaya}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hikaya} -d ${POSTGRES_DB:-hikaya}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: ./api
+    env_file:
+      - path: .env
+        required: false
+    environment: *api-env
+    depends_on:
+      db:
+        condition: service_healthy
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    volumes:
+      - media:/data/media
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  worker:
+    build: ./api
+    env_file:
+      - path: .env
+        required: false
+    environment: *api-env
+    depends_on:
+      api:
+        condition: service_healthy
+    command: python -m app.worker
+    volumes:
+      - media:/data/media
+
+  web:
+    build: ./web
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "5173:80"
+
+volumes:
+  pgdata:
+  media:

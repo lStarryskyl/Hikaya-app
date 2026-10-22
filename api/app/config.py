@@ -13,7 +13,16 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://hikaya:hikaya@localhost:5432/hikaya"
     media_dir: str = "./data/media"
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
-    jwt_secret: str = "change-me-in-env"
+
+    # Sign-in. The cookie is only marked Secure when the site is served over HTTPS.
+    cookie_secure: bool = False
+    session_ttl_days: int = 7
+
+    # Staff accounts, created at start-up when both email and password are set.
+    seed_admin_email: str = ""
+    seed_admin_password: str = ""
+    seed_reviewer_email: str = ""
+    seed_reviewer_password: str = ""
 
     # Worker behaviour
     worker_poll_seconds: float = 1.0

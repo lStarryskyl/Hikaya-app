@@ -57,6 +57,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Settings for the test run (throwaway staff passwords, CI only)
+        run: |
+          {
+            echo "SEED_ADMIN_EMAIL=admin@example.com"
+            echo "SEED_ADMIN_PASSWORD=ci-only-admin-password"
+            echo "SEED_REVIEWER_EMAIL=reviewer@example.com"
+            echo "SEED_REVIEWER_PASSWORD=ci-only-reviewer-password"
+          } > .env
       - name: Start the stack
         run: docker compose up -d --build --wait --wait-timeout 300
       - name: API health, directly and through the web proxy
@@ -73,6 +81,25 @@ jobs:
             sleep 1
           done
           exit 1
+      - name: Sign-up, sign-in, roles and sign-out work through the web proxy
+        run: |
+          set -e
+          base=http://localhost:5173/api/v1
+          json='Content-Type: application/json'
+          # staff seeded at start-up can sign in
+          curl -fsS -c admin.jar -H "$json" -d '{"email":"admin@example.com","password":"ci-only-admin-password"}' $base/auth/login
+          curl -fsS -b admin.jar $base/auth/me | grep -q '"role":"admin"'
+          curl -fsS -c reviewer.jar -H "$json" -d '{"email":"reviewer@example.com","password":"ci-only-reviewer-password"}' $base/auth/login
+          curl -fsS -b reviewer.jar $base/auth/me | grep -q '"role":"reviewer"'
+          # a new member signs up and gets the member role, whatever they send
+          curl -fsS -c member.jar -H "$json" -d '{"email":"member@example.com","password":"ci-member-password","display_name":"CI Member","role":"admin"}' $base/auth/signup | grep -q '"role":"member"'
+          curl -fsS -b member.jar $base/auth/me | grep -q '"display_name":"CI Member"'
+          # a wrong password is refused, and signed-out visitors are not "me"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H "$json" -d '{"email":"member@example.com","password":"wrong"}' $base/auth/login)" = 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' $base/auth/me)" = 401
+          # sign-out ends the session
+          test "$(curl -s -o /dev/null -w '%{http_code}' -b member.jar -X POST $base/auth/logout)" = 204
+          test "$(curl -s -o /dev/null -w '%{http_code}' -b member.jar $base/auth/me)" = 401
       - name: Logs on failure
         if: failure()
         run: docker compose logs

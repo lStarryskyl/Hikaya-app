@@ -84,7 +84,12 @@ Not used: PostGIS, Redis, Celery, MinIO. Map pins need only latitude and longitu
 
 ## Sign-in
 
-Email and password. Sign-up creates a member with no email verification. Staff accounts are seeded. No TOTP and no Google sign-in yet.
+Email and password. Sign-up creates a `member` with no email verification. Roles are `member`, `reviewer` and `admin`; sign-up can never choose one.
+
+- The browser keeps an httpOnly, SameSite=Lax cookie holding a random token. The database stores only the token's hash, so sign-out and expiry end the session at once (7 days by default).
+- Passwords are hashed with scrypt (standard library, no extra dependency).
+- Staff accounts are created when the API starts, from `SEED_ADMIN_*` and `SEED_REVIEWER_*` in `.env`. An existing account keeps its password.
+- Known limits, accepted for a local demo: no login rate limit, no password reset, and sign-up says when an email is already taken. No TOTP and no Google sign-in yet.
 
 ## Defaults I assumed (confirm or change)
 

@@ -1,6 +1,7 @@
 import { Route, Routes } from 'react-router-dom'
 import Sidebar from './components/Sidebar'
 import TopBar from './components/TopBar'
+import RequireAuth from './components/RequireAuth'
 import HomePage from './pages/HomePage'
 import ExploreMapPage from './pages/ExploreMapPage'
 import CreateStoryPage from './pages/CreateStoryPage'
@@ -9,8 +10,9 @@ import CommunityFeedPage from './pages/CommunityFeedPage'
 import ProfilePage from './pages/ProfilePage'
 import NotificationsPage from './pages/NotificationsPage'
 import SettingsPage from './pages/SettingsPage'
+import { SignInPage, SignUpPage } from './pages/AuthPages'
 
-export default function App() {
+function Shell() {
   return (
     <div className="min-h-screen flex bg-cream text-ink font-sans">
       <Sidebar />
@@ -20,7 +22,14 @@ export default function App() {
           <Routes>
             <Route path="/" element={<HomePage />} />
             <Route path="/explore" element={<ExploreMapPage />} />
-            <Route path="/create" element={<CreateStoryPage />} />
+            <Route
+              path="/create"
+              element={
+                <RequireAuth>
+                  <CreateStoryPage />
+                </RequireAuth>
+              }
+            />
             <Route path="/story/:id" element={<StoryPlayerPage />} />
             <Route path="/feed" element={<CommunityFeedPage />} />
             <Route path="/profile" element={<ProfilePage />} />
@@ -30,5 +39,15 @@ export default function App() {
         </main>
       </div>
     </div>
+  )
+}
+
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/signin" element={<SignInPage />} />
+      <Route path="/signup" element={<SignUpPage />} />
+      <Route path="*" element={<Shell />} />
+    </Routes>
   )
 }

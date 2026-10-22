@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import router as auth_router
 from app.config import get_settings
 from app.db import dispose_engine, get_session
 
@@ -40,6 +41,7 @@ async def health(session: AsyncSession = Depends(get_session)) -> JSONResponse:
 
 api_v1 = APIRouter(prefix="/api/v1")
 api_v1.add_api_route("/health", health, methods=["GET"])
+api_v1.include_router(auth_router)
 
 app.include_router(api_v1)
 # A plain /health for container health checks.

@@ -5,6 +5,7 @@ English and MSA translation. Every call is recorded in CALLS. A kind listed in F
 fails, as a provider outage would.
 """
 
+from decimal import Decimal
 from pathlib import Path
 
 from app.providers import ProviderUnavailable, Segment, Transcript
@@ -43,11 +44,25 @@ _TERMINAL = (".", "!", "?", "؟", "。")
 
 CALLS: list[tuple[str, ...]] = []
 FAIL_ON: set[str] = set()
+# Tests can make a fake behave as a paid provider: {"transcribe" | "llm": (budget, price)}.
+PAID: dict[str, tuple[str, str]] = {}
 
 
 def reset() -> None:
     CALLS.clear()
     FAIL_ON.clear()
+    PAID.clear()
+
+
+class _Priced:
+    kind = ""
+
+    @property
+    def budget(self) -> str | None:
+        return PAID[self.kind][0] if self.kind in PAID else None
+
+    def estimate_usd(self, operation: str, units: int) -> Decimal:
+        return Decimal(PAID[self.kind][1]) if self.kind in PAID else Decimal("0")
 
 
 def _check(kind: str) -> None:
@@ -68,8 +83,9 @@ def _lookup(text: str) -> dict[str, str] | None:
     return next((row for row in CORPUS if plain in row.values()), None)
 
 
-class FakeSpeechToText:
+class FakeSpeechToText(_Priced):
     name = "fake"
+    kind = "transcribe"
 
     async def transcribe(self, audio: Path, language: str | None, duration_ms: int) -> Transcript:
         CALLS.append(("transcribe", audio.name, language or "auto"))
@@ -87,8 +103,9 @@ class FakeSpeechToText:
         return Transcript(language=spoken, segments=segments)
 
 
-class FakeLanguageModel:
+class FakeLanguageModel(_Priced):
     name = "fake"
+    kind = "llm"
 
     async def polish(self, texts: list[str], language: str) -> list[str]:
         CALLS.append(("polish", language, str(len(texts))))

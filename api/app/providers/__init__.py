@@ -5,6 +5,7 @@ directly, so switching provider is a setting change, not a code change.
 """
 
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 from typing import Protocol
 
@@ -27,6 +28,12 @@ class Transcript:
 
 class SpeechToText(Protocol):
     name: str
+    # "card" or "azure" for a paid provider; None for a free one (no ledger, no live switch).
+    budget: str | None
+
+    def estimate_usd(self, operation: str, units: int) -> Decimal:
+        """Expected cost; units are milliseconds of audio."""
+        ...
 
     async def transcribe(self, audio: Path, language: str | None, duration_ms: int) -> Transcript:
         """Timestamped segments. `language` is the speaker's choice, or None to detect it."""
@@ -35,6 +42,11 @@ class SpeechToText(Protocol):
 
 class LanguageModel(Protocol):
     name: str
+    budget: str | None
+
+    def estimate_usd(self, operation: str, units: int) -> Decimal:
+        """Expected cost; units are characters of input text."""
+        ...
 
     async def polish(self, texts: list[str], language: str) -> list[str]:
         """Light clean-up in the same language, one output line per input line."""

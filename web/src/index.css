@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body {
+  background-color: #F7F4EE;
+  color: #241F1A;
+}
+
+::selection {
+  background-color: #F3E2D6;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.hikaya-map-pin:focus-visible {
+  outline: 2px solid #B85C38;
+  outline-offset: 2px;
+}
+
+.maplibregl-ctrl-attrib {
+  font-size: 10px;
+}

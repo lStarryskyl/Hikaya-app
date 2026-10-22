@@ -1,0 +1,27 @@
+# dependencies and build output
+node_modules/
+dist/
+*.tsbuildinfo
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# secrets and local state
+.env
+.env.*
+!.env.example
+*.pem
+
+# local media and data written by the app
+data/
+media/
+*.log
+
+# editor and OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

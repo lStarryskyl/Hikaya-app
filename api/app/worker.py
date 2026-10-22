@@ -10,16 +10,16 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app import jobs
+from app import jobs, pipeline
 from app.config import get_settings
 from app.db import dispose_engine, get_sessionmaker
-from app.errors import UserFacingError
+from app.errors import INTERNAL_PREFIX, UserFacingError
 from app.handlers import HANDLERS, Handler
 
-# Importing the pipeline registers its job handlers.
-from app.pipeline import INTERNAL_PREFIX
-
 log = logging.getLogger("hikaya.worker")
+
+# The pipeline module registers its job handlers when imported; keep the reference explicit.
+_REGISTERED_HANDLER_MODULES = (pipeline,)
 
 
 async def run_one(

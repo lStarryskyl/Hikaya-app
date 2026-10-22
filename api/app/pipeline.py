@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import jobs
 from app.config import get_settings
 from app.db import get_sessionmaker
-from app.errors import UserFacingError
+from app.errors import INTERNAL_PREFIX, UserFacingError
 from app.handlers import handler
 from app.models import Asset, AssetKind, Job, JobStatus, PipelineStep, Story, TextLayer
 from app.providers import Segment, language_model, speech_to_text
@@ -39,9 +39,16 @@ TARGETS: dict[str, tuple[str, ...]] = {
 TARGET_LAYER = {"english": "translation_en", "msa": "translation_msa"}
 TARGET_STEP = {"english": "translate_en", "msa": "translate_msa"}
 STEPS = ("transcribe", "polish", "translate_en", "translate_msa")
+# Which step writes each layer.
+PRODUCED_BY = {
+    VERBATIM: "transcribe",
+    POLISHED: "polish",
+    "translation_en": "translate_en",
+    "translation_msa": "translate_msa",
+}
+WAITING = "waiting"  # a step that has not been queued yet
 
 MAX_SEGMENT_CHARS = 2000
-INTERNAL_PREFIX = "internal: "
 GENERIC_FAILURE = "Something went wrong in this step. Try again."
 
 
@@ -107,6 +114,10 @@ async def _queue(
         idempotency_key=f"{step}:{story_id}:{input_hash}",
         commit=False,
     )
+    # The same input came back (A -> B -> A, or a new upload of the same recording): its
+    # earlier result was replaced since, so the same job runs again.
+    if job.status in (JobStatus.DONE, JobStatus.FAILED):
+        await jobs.restart(session, job.id)
     if row is None:
         session.add(
             PipelineStep(story_id=story_id, step=step, input_hash=input_hash, job_id=job.id)
@@ -115,9 +126,19 @@ async def _queue(
         row.input_hash, row.job_id = input_hash, job.id
 
 
-async def _is_current(session: AsyncSession, payload: dict) -> bool:
-    row = await session.get(PipelineStep, (uuid.UUID(payload["story_id"]), payload["step"]))
+async def _is_current(session: AsyncSession, payload: dict, *, lock: bool = False) -> bool:
+    """Is this job's input still the step's input? With lock, holds the step row until commit,
+    so the input cannot change between this check and saving the result."""
+    row = await session.get(
+        PipelineStep,
+        (uuid.UUID(payload["story_id"]), payload["step"]),
+        with_for_update=lock,
+        populate_existing=True,
+    )
     return row is not None and row.input_hash == payload["input_hash"]
+
+
+STALE = {"stale": True}
 
 
 # --- starting and re-running ---
@@ -184,7 +205,7 @@ async def transcribe(payload: dict) -> dict:
     async with get_sessionmaker()() as session:
         story = await session.get(Story, uuid.UUID(payload["story_id"]))
         if story is None or not await _is_current(session, payload):
-            return {"stale": True}
+            return STALE
         asset = (
             await session.execute(
                 select(Asset).where(Asset.story_id == story.id, Asset.kind == AssetKind.AUDIO)
@@ -193,6 +214,8 @@ async def transcribe(payload: dict) -> dict:
         result = await speech_to_text().transcribe(
             get_storage().path(asset.storage_key), story.original_language, story.duration_ms or 0
         )
+        if not await _is_current(session, payload, lock=True):
+            return STALE
         if not result.segments:
             raise UserFacingError("No speech was found in the recording.")
         if story.original_language is None:
@@ -218,9 +241,11 @@ async def polish(payload: dict) -> dict:
     async with get_sessionmaker()() as session:
         story = await session.get(Story, uuid.UUID(payload["story_id"]))
         if story is None or not await _is_current(session, payload):
-            return {"stale": True}
+            return STALE
         verbatim = await _layer(session, story.id, VERBATIM)
         texts = await language_model().polish(_texts(verbatim), verbatim.language)
+        if not await _is_current(session, payload, lock=True):
+            return STALE
         await _save_layer(
             session, story.id, POLISHED, verbatim.language, _aligned(verbatim.segments, texts)
         )
@@ -235,10 +260,12 @@ async def translate(payload: dict) -> dict:
     async with get_sessionmaker()() as session:
         story = await session.get(Story, uuid.UUID(payload["story_id"]))
         if story is None or not await _is_current(session, payload):
-            return {"stale": True}
+            return STALE
         target = payload["target"]
         polished = await _layer(session, story.id, POLISHED)
         texts = await language_model().translate(_texts(polished), polished.language, target)
+        if not await _is_current(session, payload, lock=True):
+            return STALE
         await _save_layer(
             session, story.id, TARGET_LAYER[target], target, _aligned(polished.segments, texts)
         )
@@ -256,9 +283,9 @@ class StepStatus:
     message: str
 
 
-def _message(job: Job | None) -> tuple[str, str]:
+def _status_and_message(job: Job | None) -> tuple[str, str]:
     if job is None:
-        return JobStatus.QUEUED, "Waits for the previous step."
+        return WAITING, "Waits for the step above."
     error = job.error or ""
     shown = GENERIC_FAILURE if error.startswith(INTERNAL_PREFIX) else error
     if job.status == JobStatus.FAILED:
@@ -283,7 +310,7 @@ async def status(session: AsyncSession, story: Story) -> tuple[list[StepStatus],
     for step in expected_steps(story.original_language):
         row = rows.get(step)
         job = await session.get(Job, row.job_id) if row and row.job_id else None
-        state, message = _message(job if row else None)
+        state, message = _status_and_message(job if row else None)
         out.append(StepStatus(step, state, message))
     return out, all(s.status == JobStatus.DONE for s in out)
 
@@ -309,11 +336,19 @@ class LayerNotReady(Exception):
     pass
 
 
+class LayerBusy(Exception):
+    """The step that makes this layer is queued or running; an edit would be overwritten."""
+
+
 async def edit_layer(session: AsyncSession, story: Story, kind: str, texts: list[str]) -> None:
     """Save edited text (timestamps unchanged) and re-run only what depends on it. Commits."""
     layer = await _layer(session, story.id, kind)
     if layer is None:
         raise LayerNotReady
+    row = await session.get(PipelineStep, (story.id, PRODUCED_BY[kind]))
+    job = await session.get(Job, row.job_id) if row and row.job_id else None
+    if job is not None and job.status in (JobStatus.QUEUED, JobStatus.RUNNING):
+        raise LayerBusy
     layer.segments = _aligned(layer.segments, texts)
     layer.edited = True
     await session.flush()

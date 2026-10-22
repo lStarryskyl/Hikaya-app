@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { LAYER_LABELS, textDirection, timestamp, type LayerKind, type TextLayer } from '../stories'
+import { LAYER_LABELS, textDirection, textFont, timestamp, type LayerKind, type TextLayer } from '../stories'
 
 /**
  * The player's transcript: pick a version, follow along as the line being spoken is
@@ -71,7 +71,7 @@ export default function TranscriptView({
               }`}
             >
               <span className="me-2 font-mono text-[10px] text-terracotta">{timestamp(seg.start_ms)}</span>
-              <span {...direction} className={`${layer.language === 'english' ? '' : 'font-arabic'} block`}>
+              <span {...direction} className={`${textFont(layer.language)} block`}>
                 {seg.text}
               </span>
             </button>

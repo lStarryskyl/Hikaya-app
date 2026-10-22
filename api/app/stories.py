@@ -386,6 +386,7 @@ async def retry_step(
     story = await _own_story(session, story_id, user)
     if step not in pipeline.STEPS:
         raise HTTPException(404, "No such step.")
+    _require_editable(story)
     if not await pipeline.retry(session, story, step):
         raise HTTPException(409, "Only a failed step can be retried.")
     return await pipeline_status(story_id, user, session)
@@ -407,6 +408,10 @@ async def edit_layer(
         await pipeline.edit_layer(session, story, kind, body.texts)
     except pipeline.LayerNotReady:
         raise HTTPException(409, "This text is not ready yet.") from None
+    except pipeline.LayerBusy:
+        raise HTTPException(
+            409, "This text is being updated right now. Edit it once it has finished."
+        ) from None
     except pipeline.Misaligned:
         raise HTTPException(422, "Keep exactly one text for each line.") from None
     await session.refresh(story)

@@ -108,7 +108,7 @@ These exist on purpose while the build is in progress. Each closes with the tick
 ## Text pipeline
 
 - The member chooses the spoken language before uploading. Transcription starts as soon as the recording is uploaded; polishing follows, then the translations, each as its own job.
-- Each step records a hash of its input. A new recording or a new language starts over from transcription and clears the old text. Editing the original words re-runs polishing and the translations; editing the polished text re-runs only the translations; editing a translation re-runs nothing. A result made from outdated input is dropped.
+- Each step records a hash of its input. A new recording or a new language starts over from transcription and clears the old text. Editing the original words re-runs polishing and the translations; editing the polished text re-runs only the translations; editing a translation re-runs nothing. Re-running a later version replaces edits made to it, and the editor says so. A version cannot be edited while it is being remade. A result made from outdated input is dropped, and an input that returns to an earlier value runs again.
 - Publishing needs the original words and the polished text. Translations may still be running.
 - Failed steps show a plain message; unexpected errors never show their internal detail. A failed step can be retried from the Transcript step.
 

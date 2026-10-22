@@ -219,7 +219,8 @@ async def test_a_failing_step_retries_then_reports_a_plain_message(
     assert steps["transcribe"]["status"] == "done"
     assert steps["polish"]["status"] == "failed"
     assert steps["polish"]["message"] == "The language model is unavailable right now."
-    assert "translate_en" not in steps or steps["translate_en"]["status"] == "queued"
+    # Steps that never started say so, instead of looking queued forever.
+    assert steps["translate_en"]["status"] == "waiting"
     assert body["complete"] is False
     assert [c[0] for c in fake.CALLS].count("polish") == 3  # max attempts
 
@@ -414,3 +415,99 @@ async def test_publishing_waits_for_the_transcript(client, sessionmaker, tones):
     }
     # Pipeline progress is for the author and staff, not the public.
     assert (await client.get(f"/api/v1/stories/{story_id}/pipeline")).status_code == 404
+
+
+async def test_going_back_to_an_earlier_text_runs_again(client, sessionmaker, tones):
+    """Edit A -> B -> A: the polished text must follow A again, not stay on B."""
+    await sign_up(client)
+    story_id = await story_with_audio(client, tones["short"])
+    await drain(sessionmaker)
+    original = [
+        s["text"] for s in layers_by_kind(await get_story(client, story_id))["verbatim"]["segments"]
+    ]
+    edited = ["سطر معدل"] + original[1:]
+    path = f"/api/v1/stories/{story_id}/layers/verbatim"
+    await client.patch(path, json={"texts": edited})
+    await drain(sessionmaker)
+    await client.patch(path, json={"texts": original})
+    await drain(sessionmaker)
+    polished = layers_by_kind(await get_story(client, story_id))["polished"]["segments"]
+    assert polished[0]["text"].startswith(original[0])
+
+
+async def test_switching_language_back_brings_the_transcript_back(client, sessionmaker, tones):
+    await sign_up(client)
+    story_id = await story_with_audio(client, tones["short"], language="jordanian")
+    await drain(sessionmaker)
+    for language in ("english", "jordanian"):
+        await client.patch(f"/api/v1/stories/{story_id}", json={"original_language": language})
+        await drain(sessionmaker)
+    story = await get_story(client, story_id)
+    assert set(layers_by_kind(story)) == {
+        "verbatim",
+        "polished",
+        "translation_en",
+        "translation_msa",
+    }
+    _, body = await status(client, story_id)
+    assert body["complete"] is True
+
+
+async def test_a_result_that_finishes_after_the_input_changed_is_dropped(
+    client, sessionmaker, tones, monkeypatch
+):
+    """The input changes while the provider is still working on the old input."""
+    await sign_up(client)
+    story_id = await story_with_audio(client, tones["short"])
+    assert await run_one(sessionmaker)  # transcribe; polish is queued next
+    verbatim = [
+        s["text"] for s in layers_by_kind(await get_story(client, story_id))["verbatim"]["segments"]
+    ]
+    original_polish = fake.FakeLanguageModel.polish
+
+    async def slow_polish(self, texts, language):
+        # While the provider "works", the author edits the original words.
+        await client.patch(
+            f"/api/v1/stories/{story_id}/layers/verbatim",
+            json={"texts": ["تعديل أثناء العمل"] + verbatim[1:]},
+        )
+        return await original_polish(self, texts, language)
+
+    monkeypatch.setattr(fake.FakeLanguageModel, "polish", slow_polish)
+    assert await run_one(sessionmaker)  # the old polish finishes late
+    monkeypatch.setattr(fake.FakeLanguageModel, "polish", original_polish)
+    assert "polished" not in layers_by_kind(await get_story(client, story_id))
+    await drain(sessionmaker)
+    polished = layers_by_kind(await get_story(client, story_id))["polished"]["segments"]
+    assert polished[0]["text"].startswith("تعديل أثناء العمل")
+
+
+async def test_a_version_cannot_be_edited_while_it_is_being_made(client, sessionmaker, tones):
+    await sign_up(client)
+    story_id = await story_with_audio(client, tones["short"])
+    await drain(sessionmaker)
+    layers = layers_by_kind(await get_story(client, story_id))
+    texts = [s["text"] for s in layers["polished"]["segments"]]
+    await client.patch(
+        f"/api/v1/stories/{story_id}/layers/polished", json={"texts": ["تغيير."] + texts[1:]}
+    )
+    # The translations are now queued again, so they cannot be edited until they finish.
+    en = [s["text"] for s in layers["translation_en"]["segments"]]
+    r = await client.patch(f"/api/v1/stories/{story_id}/layers/translation_en", json={"texts": en})
+    assert r.status_code == 409
+
+
+async def test_steps_of_a_published_story_cannot_be_retried(client, sessionmaker, tones):
+    await sign_up(client)
+    story_id = await story_with_audio(client, tones["short"])
+    fake.FAIL_ON.add("translate")
+    await drain(sessionmaker)
+    fake.FAIL_ON.clear()
+    await client.patch(
+        f"/api/v1/stories/{story_id}",
+        json={"title": "T", "category": "folklore", "place_name": "Madaba",
+              "latitude": 31.7, "longitude": 35.8},
+    )  # fmt: skip
+    assert (await client.post(f"/api/v1/stories/{story_id}/submit")).status_code == 200
+    r = await client.post(f"/api/v1/stories/{story_id}/pipeline/translate_en/retry")
+    assert r.status_code == 409

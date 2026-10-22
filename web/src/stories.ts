@@ -23,7 +23,8 @@ export type StepName = 'transcribe' | 'polish' | 'translate_en' | 'translate_msa
 
 export interface PipelineStep {
   step: StepName
-  status: 'queued' | 'running' | 'done' | 'failed'
+  /** waiting: not started, because an earlier step has not finished. */
+  status: 'waiting' | 'queued' | 'running' | 'done' | 'failed'
   message: string
 }
 
@@ -81,9 +82,17 @@ export const STEP_LABELS: Record<StepName, string> = {
   translate_msa: 'Translating to Modern Standard Arabic',
 }
 
+/** Same limit as the API's per-line maximum. */
+export const MAX_SEGMENT_CHARS = 2000
+
 /** Arabic text (dialect or MSA) is laid out right to left. */
 export function textDirection(language: LanguageValue): { dir: 'rtl' | 'ltr'; lang: string } {
   return language === 'english' ? { dir: 'ltr', lang: 'en' } : { dir: 'rtl', lang: 'ar' }
+}
+
+/** The font class for text in this language. */
+export function textFont(language: LanguageValue): string {
+  return language === 'english' ? '' : 'font-arabic'
 }
 
 export function hasTranscript(story: StoryRecord | null): boolean {

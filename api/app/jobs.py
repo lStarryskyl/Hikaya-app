@@ -49,6 +49,23 @@ async def enqueue(
     return job
 
 
+async def restart(session: AsyncSession, job_id) -> None:
+    """Run a finished (done or failed) job again with fresh attempts. Does not commit."""
+    await session.execute(
+        update(Job)
+        .where(Job.id == job_id, Job.status.in_([JobStatus.DONE, JobStatus.FAILED]))
+        .values(
+            status=JobStatus.QUEUED,
+            attempts=0,
+            run_after=func.now(),
+            error=None,
+            result=None,
+            finished_at=None,
+            locked_at=None,
+        )
+    )
+
+
 async def requeue(session: AsyncSession, job_id) -> bool:
     """Give a failed job a fresh set of attempts. False if it was not failed."""
     result = await session.execute(

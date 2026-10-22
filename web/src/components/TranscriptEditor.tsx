@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertCircle, Check, Loader2, RotateCcw } from 'lucide-react'
+import { AlertCircle, Check, Clock, Loader2, RotateCcw } from 'lucide-react'
 import { ApiError } from '../api'
 import { PillButton } from './ui'
 import {
-  LAYER_LABELS, STEP_LABELS, editLayer, getPipeline, getStory, retryStep, textDirection, timestamp,
+  LAYER_LABELS, MAX_SEGMENT_CHARS, STEP_LABELS, editLayer, getPipeline, getStory, retryStep,
+  textDirection, textFont, timestamp,
   type LayerKind, type PipelineStatus, type StoryRecord,
 } from '../stories'
 
@@ -24,17 +25,33 @@ export default function TranscriptEditor({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const lastSignature = useRef('')
+  // Every request takes a number; a response that is no longer the newest is ignored, so a
+  // slow poll can never overwrite text saved after it started.
+  const requestSeq = useRef(0)
+  const mounted = useRef(true)
+  useEffect(() => {
+    // Set on every mount: React's strict mode mounts, unmounts and mounts again in development.
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
   // Bumped after a save or retry, so polling starts again while new steps run.
   const [pollKey, setPollKey] = useState(0)
 
+  const isLatest = (seq: number) => mounted.current && seq === requestSeq.current
+
   const refresh = useCallback(async () => {
+    const seq = ++requestSeq.current
     const status = await getPipeline(storyId)
+    if (!isLatest(seq)) return status
     setPipeline(status)
     // Fetch the story only when a step changed, so text appears as soon as it is ready.
     const signature = status.steps.map((s) => `${s.step}:${s.status}`).join('|')
     if (signature !== lastSignature.current) {
-      lastSignature.current = signature
       const fresh = await getStory(storyId)
+      if (!isLatest(seq)) return status
+      lastSignature.current = signature
       setStory(fresh)
       onStory(fresh)
     }
@@ -65,15 +82,19 @@ export default function TranscriptEditor({
 
   const layers = story?.layers ?? []
   const layer = layers.find((l) => l.kind === active) ?? layers[0]
-  const texts = layer ? (drafts[layer.kind] ?? layer.segments.map((s) => s.text)) : []
-  const dirty = !!layer && !!drafts[layer.kind]
+  // A draft only applies while it still has one text per line of the current version.
+  const draft = layer ? drafts[layer.kind] : undefined
+  const dirty = !!layer && !!draft && draft.length === layer.segments.length
+  const texts = layer ? (dirty ? draft! : layer.segments.map((s) => s.text)) : []
 
   async function save() {
     if (!layer) return
     setSaving(true)
     setError('')
+    const seq = ++requestSeq.current
     try {
       const fresh = await editLayer(storyId, layer.kind, texts)
+      if (!mounted.current) return // the save started a newer request, so older polls are ignored
       setStory(fresh)
       onStory(fresh)
       setDrafts(({ [layer.kind]: _saved, ...rest }) => rest)
@@ -112,6 +133,8 @@ export default function TranscriptEditor({
                     <Check size={15} className="text-teal" aria-hidden />
                   ) : s.status === 'failed' ? (
                     <AlertCircle size={15} className="text-terracotta" aria-hidden />
+                  ) : s.status === 'waiting' ? (
+                    <Clock size={15} className="text-muted" aria-hidden />
                   ) : (
                     <Loader2
                       size={15}
@@ -170,26 +193,24 @@ export default function TranscriptEditor({
                       {...textDirection(layer.language)}
                       value={texts[i]}
                       rows={2}
-                      maxLength={2000}
+                      maxLength={MAX_SEGMENT_CHARS}
                       aria-label={`${LAYER_LABELS[layer.kind]}, line ${i + 1}`}
                       onChange={(e) => {
                         const next = [...texts]
                         next[i] = e.target.value
                         setDrafts((d) => ({ ...d, [layer.kind]: next }))
                       }}
-                      className={`w-full resize-y rounded-lg border border-border bg-cream px-3 py-2 text-sm leading-relaxed text-ink outline-none focus:ring-2 focus:ring-terracotta/30 ${
-                        layer.language === 'english' ? '' : 'font-arabic'
-                      }`}
+                      className={`w-full resize-y rounded-lg border border-border bg-cream px-3 py-2 text-sm leading-relaxed text-ink outline-none focus:ring-2 focus:ring-terracotta/30 ${textFont(layer.language)}`}
                     />
                   </label>
                 ))}
                 <div className="flex items-center justify-between pt-2">
                   <p className="text-[11px] text-muted">
                     {layer.kind === 'verbatim'
-                      ? 'Saving the original words refreshes the polished text and translations.'
+                      ? 'Saving the original words remakes the polished text and translations, replacing edits made to them.'
                       : layer.kind === 'polished'
-                        ? 'Saving the polished text refreshes the translations.'
-                        : 'Your edits to a translation are kept as they are.'}
+                        ? 'Saving the polished text remakes the translations, replacing edits made to them.'
+                        : 'Your edits to a translation are kept, unless an earlier version changes.'}
                   </p>
                   <PillButton
                     type="button"

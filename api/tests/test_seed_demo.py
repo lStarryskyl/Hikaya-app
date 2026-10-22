@@ -118,3 +118,23 @@ async def test_story_cover_comes_from_its_photo_or_its_place(client, sessionmake
 async def test_unknown_photos_and_sizes_are_404(client, sessionmaker, photo_dir, path):
     await seed_demo(sessionmaker, photo_dir)
     assert (await client.get(path)).status_code == 404
+
+
+async def test_seed_keeps_curation_made_in_the_app(sessionmaker, session, photo_dir):
+    await seed_demo(sessionmaker, photo_dir)
+    loom = (
+        await session.execute(select(Story).where(Story.title == "The Loom of Ancestors"))
+    ).scalar_one()
+    petra = (
+        await session.execute(select(Story).where(Story.title == "The Echoes of Petra"))
+    ).scalar_one()
+    from datetime import UTC, datetime
+
+    loom.curated_at = datetime.now(UTC)  # staff added it to the museum
+    petra.curated_at = None  # staff took it out
+    await session.commit()
+    await seed_demo(sessionmaker, photo_dir)
+    await session.refresh(loom)
+    await session.refresh(petra)
+    assert loom.curated_at is not None
+    assert petra.curated_at is None

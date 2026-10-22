@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Bookmark, Calendar, ChevronRight, Filter, Heart, MapPin, MessageCircle, MoreHorizontal,
@@ -23,28 +23,41 @@ export default function CommunityFeedPage() {
   const [stories, setStories] = useState<StoryCard[]>([])
   const [cursor, setCursor] = useState<string | null>(null)
   const [done, setDone] = useState(false)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [reactions, setReactions] = useState<Record<string, MockReaction>>({})
   const places = useApi(getPlaces, [])
+  // The side panel draws from a fixed list, so it does not change as more pages load.
+  const rail = useApi(() => getFeed({ limit: 50 }), [])
+  const mounted = useRef(true)
+  const started = useRef(false)
 
   async function loadMore(from: string | null) {
     setLoading(true)
     setError('')
     try {
       const page = await getFeed({ limit: PAGE_SIZE, cursor: from })
+      if (!mounted.current) return
       setStories((prev) => [...prev, ...page.items.filter((s) => !prev.some((p) => p.id === s.id))])
       setCursor(page.next_cursor)
       setDone(page.next_cursor === null)
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Could not load stories.')
+      if (mounted.current) setError(e instanceof ApiError ? e.message : 'Could not load stories.')
     } finally {
-      setLoading(false)
+      if (mounted.current) setLoading(false)
     }
   }
 
   useEffect(() => {
-    void loadMore(null)
+    mounted.current = true
+    // Strict mode runs effects twice in development; load the first page only once.
+    if (!started.current) {
+      started.current = true
+      void loadMore(null)
+    }
+    return () => {
+      mounted.current = false
+    }
   }, [])
 
   function react(id: string, key: keyof MockReaction) {
@@ -54,8 +67,9 @@ export default function CommunityFeedPage() {
     })
   }
 
-  const pick = stories.find((s) => s.curated)
-  const storytellers = [...new Map(stories.map((s) => [s.author.id, s.author])).values()].slice(0, 3)
+  const railStories = rail.data?.items ?? []
+  const pick = railStories.find((s) => s.curated)
+  const storytellers = [...new Map(railStories.map((s) => [s.author.id, s.author])).values()].slice(0, 3)
 
   return (
     <div className="px-6 py-6 max-w-6xl mx-auto">
@@ -157,7 +171,7 @@ export default function CommunityFeedPage() {
                 <p className="text-[12px] text-muted">You've seen every story on Hikaya so far.</p>
               </>
             ) : null}
-            {!done && (
+            {!done && !(loading && stories.length === 0) && (
               <PillButton
                 variant="outline"
                 className="text-xs disabled:opacity-60"

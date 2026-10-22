@@ -53,7 +53,9 @@ async def run_one(
         return True
 
 
-async def run_forever(stop: asyncio.Event, sessionmaker=None) -> None:
+async def run_forever(
+    stop: asyncio.Event, sessionmaker: async_sessionmaker[AsyncSession] | None = None
+) -> None:
     settings = get_settings()
     sessionmaker = sessionmaker or get_sessionmaker()
     ticks = 0

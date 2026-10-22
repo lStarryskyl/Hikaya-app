@@ -114,7 +114,34 @@ async def test_a_story_card_says_whether_it_is_curated(client, session, author):
     assert card["curated"] is True
 
 
-async def test_unknown_story_ids_in_the_feed_are_not_an_error(client):
+async def test_an_empty_feed_is_not_an_error(client):
     body = (await client.get("/api/v1/stories")).json()
     assert body == {"items": [], "next_cursor": None}
-    assert uuid  # keep the import honest
+
+
+async def test_a_cursor_without_a_timezone_is_refused(client):
+    import base64
+    import json
+
+    raw = json.dumps(["2026-01-01T00:00:00", str(uuid.uuid4())]).encode()
+    cursor = base64.urlsafe_b64encode(raw).decode()
+    assert (await client.get("/api/v1/stories", params={"cursor": cursor})).status_code == 422
+
+
+async def test_a_full_feed_page_takes_a_handful_of_queries(client, session, author):
+    """Cards are loaded in batches, not one story at a time."""
+    from sqlalchemy import event
+
+    from app.db import get_engine
+
+    for i in range(20):
+        await add_story(session, author, f"Story {i}", days_ago=i)
+    statements = []
+    listener = lambda *args: statements.append(args[2])  # noqa: E731
+    event.listen(get_engine().sync_engine, "before_cursor_execute", listener)
+    try:
+        r = await client.get("/api/v1/stories", params={"limit": 20})
+    finally:
+        event.remove(get_engine().sync_engine, "before_cursor_execute", listener)
+    assert len(r.json()["items"]) == 20
+    assert len(statements) <= 8, statements

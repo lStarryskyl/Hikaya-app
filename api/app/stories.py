@@ -199,23 +199,18 @@ async def to_out(session: AsyncSession, story: Story) -> StoryOut:
             for la in await pipeline.layers(session, story.id)
         ],
         place_slug=story.place_slug,
-        cover=places.photo_out(cover)
-        if (cover := await places.cover_for(session, story))
-        else None,
+        cover=await places.cover_out(session, story),
         curated=story.curated_at is not None,
     )
 
 
-async def _cover_out(session: AsyncSession, story: Story) -> places.PhotoOut | None:
-    cover = await places.cover_for(session, story)
-    return places.photo_out(cover) if cover else None
-
-
-def _apply(story: Story, fields: StoryFields) -> None:
+async def _apply(session: AsyncSession, story: Story, fields: StoryFields) -> None:
     for name, value in fields.model_dump(exclude_unset=True).items():
         if value is None and name in ("title", "place_name"):
             value = ""
         setattr(story, name, value.value if hasattr(value, "value") else value)
+    # Link the story to a known place when its place name matches one.
+    story.place_slug = await places.slug_for_name(session, story.place_name)
 
 
 @router.post("", status_code=201, response_model=StoryOut)
@@ -225,8 +220,7 @@ async def create_story(
     session: AsyncSession = Depends(get_session),
 ) -> StoryOut:
     story = Story(author_id=user.id)
-    _apply(story, body)
-    story.place_slug = await places.slug_for_name(session, story.place_name)
+    await _apply(session, story, body)
     session.add(story)
     await session.commit()
     await session.refresh(story)
@@ -252,8 +246,7 @@ async def edit_story(
     story = await _own_story(session, story_id, user)
     _require_editable(story)
     language_before = story.original_language
-    _apply(story, body)
-    story.place_slug = await places.slug_for_name(session, story.place_name)
+    await _apply(session, story, body)
     await session.commit()
     if story.original_language != language_before:
         await pipeline.start(session, story)

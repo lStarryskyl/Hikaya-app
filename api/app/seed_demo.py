@@ -19,7 +19,7 @@ from app import places
 from app.config import get_settings
 from app.db import dispose_engine, get_sessionmaker
 from app.demo_data import PLACES, STORIES, STORYTELLERS, StorySeed
-from app.models import PipelineStep, Place, PlacePhoto, Story, TextLayer, User
+from app.models import PipelineStep, Place, PlacePhoto, Story, StoryStatus, TextLayer, User
 from app.pipeline import TARGET_LAYER, TARGETS
 from app.storage import get_storage
 
@@ -109,21 +109,21 @@ async def _seed_stories(
     now = datetime.now(UTC)
     for seed in STORIES:
         sid = story_id(seed.key)
-        story = await session.get(Story, sid) or Story(id=sid)
+        existing = await session.get(Story, sid)
+        story = existing or Story(id=sid)
         story.author_id = authors[seed.storyteller]
         story.title, story.category = seed.title, seed.category
         story.place_slug = seed.place
         story.place_name = next(p.name for p in PLACES if p.slug == seed.place)
         story.latitude, story.longitude = seed.latitude, seed.longitude
         story.original_language, story.duration_ms = seed.language, seed.duration_ms
-        story.status = "published"
+        story.status = StoryStatus.PUBLISHED.value
         # Relative to today, so "recently added" stays true for the demo whenever it runs.
         story.published_at = now - timedelta(days=seed.published_days_ago)
         story.cover_photo_slug = seed.cover if seed.cover in photos else None
-        if seed.curated:
-            story.curated_at = story.curated_at or story.published_at
-        else:
-            story.curated_at = None
+        # Museum curation is decided in the app after the first load; never undo it here.
+        if existing is None and seed.curated:
+            story.curated_at = story.published_at
         session.add(story)
         await session.flush()
 

@@ -4,6 +4,7 @@ import base64
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -12,16 +13,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
 from app.models import Place, PlacePhoto, Story, StoryStatus, TextLayer, User
-from app.places import PhotoOut, cover_for, photo_out
+from app.pipeline import POLISHED, TARGET_LAYER
+from app.places import PhotoOut, covers_for, photo_out
+from app.stories import AuthorOut
 
 router = APIRouter(tags=["discover"])
 
 RECENT_DAYS = 14
-
-
-class AuthorOut(BaseModel):
-    id: uuid.UUID
-    display_name: str
+PinKind = Literal["featured", "recent", "ordinary"]
+# A card's excerpt is the first English line, else the first polished line.
+EXCERPT_LAYERS = (TARGET_LAYER["english"], POLISHED)
 
 
 class StoryCard(BaseModel):
@@ -51,7 +52,7 @@ class PinOut(BaseModel):
     category: str | None
     latitude: float
     longitude: float
-    kind: str  # featured | recent | ordinary
+    kind: PinKind
 
 
 class PlaceOut(BaseModel):
@@ -64,7 +65,7 @@ class PlaceOut(BaseModel):
     story_count: int
 
 
-def pin_kind(story: Story, now: datetime) -> str:
+def pin_kind(story: Story, now: datetime) -> PinKind:
     if story.curated_at is not None:
         return "featured"
     if story.published_at and story.published_at >= now - timedelta(days=RECENT_DAYS):
@@ -72,40 +73,48 @@ def pin_kind(story: Story, now: datetime) -> str:
     return "ordinary"
 
 
-async def excerpt_for(session: AsyncSession, story: Story) -> str:
-    """The first English line, else the first polished line."""
-    rows = {
-        layer.kind: layer
-        for layer in (
-            await session.execute(
-                select(TextLayer).where(
-                    TextLayer.story_id == story.id,
-                    TextLayer.kind.in_(["translation_en", "polished"]),
-                )
-            )
+async def cards_for(session: AsyncSession, stories: list[Story]) -> list[StoryCard]:
+    """Cards for many stories in a fixed number of queries (authors, excerpts, covers)."""
+    if not stories:
+        return []
+    ids = [s.id for s in stories]
+    authors = {
+        u.id: u
+        for u in (
+            await session.execute(select(User).where(User.id.in_({s.author_id for s in stories})))
         ).scalars()
     }
-    layer = rows.get("translation_en") or rows.get("polished")
-    return layer.segments[0]["text"] if layer and layer.segments else ""
+    layers: dict[uuid.UUID, dict[str, TextLayer]] = {}
+    for layer in (
+        await session.execute(
+            select(TextLayer).where(TextLayer.story_id.in_(ids), TextLayer.kind.in_(EXCERPT_LAYERS))
+        )
+    ).scalars():
+        layers.setdefault(layer.story_id, {})[layer.kind] = layer
+    covers = await covers_for(session, stories)
 
+    def excerpt(story_id: uuid.UUID) -> str:
+        found = layers.get(story_id, {})
+        layer = next((found[k] for k in EXCERPT_LAYERS if k in found), None)
+        return layer.segments[0]["text"] if layer and layer.segments else ""
 
-async def card_for(session: AsyncSession, story: Story) -> StoryCard:
-    author = await session.get(User, story.author_id)
-    cover = await cover_for(session, story)
-    return StoryCard(
-        id=story.id,
-        title=story.title,
-        category=story.category,
-        place_name=story.place_name,
-        latitude=story.latitude,
-        longitude=story.longitude,
-        duration_ms=story.duration_ms,
-        published_at=story.published_at,
-        curated=story.curated_at is not None,
-        author=AuthorOut(id=author.id, display_name=author.display_name),
-        excerpt=await excerpt_for(session, story),
-        cover=photo_out(cover) if cover else None,
-    )
+    return [
+        StoryCard(
+            id=s.id,
+            title=s.title,
+            category=s.category,
+            place_name=s.place_name,
+            latitude=s.latitude,
+            longitude=s.longitude,
+            duration_ms=s.duration_ms,
+            published_at=s.published_at,
+            curated=s.curated_at is not None,
+            author=AuthorOut(id=s.author_id, display_name=authors[s.author_id].display_name),
+            excerpt=excerpt(s.id),
+            cover=photo_out(covers[s.id]) if covers[s.id] else None,
+        )
+        for s in stories
+    ]
 
 
 def _encode_cursor(story: Story) -> str:
@@ -116,7 +125,10 @@ def _encode_cursor(story: Story) -> str:
 def _decode_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
     try:
         published_at, story_id = json.loads(base64.urlsafe_b64decode(cursor.encode()))
-        return datetime.fromisoformat(published_at), uuid.UUID(story_id)
+        when = datetime.fromisoformat(published_at)
+        if when.tzinfo is None:
+            raise ValueError("cursor time without a timezone")
+        return when, uuid.UUID(story_id)
     except (ValueError, TypeError) as exc:
         raise HTTPException(422, "That page link is not valid.") from exc
 
@@ -128,7 +140,9 @@ async def feed(
     session: AsyncSession = Depends(get_session),
 ) -> FeedPage:
     """Published stories, newest first. Pass `next_cursor` back to get the next page."""
-    query = select(Story).where(Story.status == StoryStatus.PUBLISHED)
+    query = select(Story).where(
+        Story.status == StoryStatus.PUBLISHED, Story.published_at.is_not(None)
+    )
     if cursor:
         published_at, story_id = _decode_cursor(cursor)
         query = query.where(tuple_(Story.published_at, Story.id) < (published_at, story_id))
@@ -137,7 +151,7 @@ async def feed(
     more = len(stories) > limit
     stories = stories[:limit]
     return FeedPage(
-        items=[await card_for(session, s) for s in stories],
+        items=await cards_for(session, stories),
         next_cursor=_encode_cursor(stories[-1]) if more else None,
     )
 
@@ -179,16 +193,14 @@ async def list_places(session: AsyncSession = Depends(get_session)) -> list[Plac
             )
         ).all()
     )
+    by_place: dict[str, list[PhotoOut]] = {}
+    for photo in (
+        await session.execute(select(PlacePhoto).order_by(PlacePhoto.sort_order))
+    ).scalars():
+        by_place.setdefault(photo.place_slug, []).append(photo_out(photo))
     out = []
     for place in (await session.execute(select(Place).order_by(Place.sort_order))).scalars():
-        photos = (
-            await session.execute(
-                select(PlacePhoto)
-                .where(PlacePhoto.place_slug == place.slug)
-                .order_by(PlacePhoto.sort_order)
-            )
-        ).scalars()
-        photos = [photo_out(p) for p in photos]
+        photos = by_place.get(place.slug, [])
         cover = next((p for p in photos if p.slug == place.cover_photo_slug), None)
         out.append(
             PlaceOut(

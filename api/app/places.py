@@ -52,7 +52,8 @@ async def convert(source: Path, slug: str, storage: LocalStorage) -> list[int]:
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
         process = await asyncio.create_subprocess_exec(
-            "ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(source),
+            "ffmpeg", "-nostdin", "-v", "error", "-y",
+            "-protocol_whitelist", "file", "-f", "image2", "-i", str(source),
             "-vf", f"scale='min({width},iw)':-2", "-c:v", "libwebp", "-quality", "78",
             str(target),
             stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
@@ -72,13 +73,30 @@ async def slug_for_name(session: AsyncSession, name: str) -> str | None:
     ).scalar_one_or_none()
 
 
-async def cover_for(session: AsyncSession, story: Story) -> PlacePhoto | None:
-    """The story's own cover photo, else its place's cover, else none."""
-    slug = story.cover_photo_slug
-    if slug is None and story.place_slug:
-        place = await session.get(Place, story.place_slug)
-        slug = place.cover_photo_slug if place else None
-    return await session.get(PlacePhoto, slug) if slug else None
+async def covers_for(session: AsyncSession, stories: list[Story]) -> dict:
+    """story id -> cover photo (the story's own, else its place's, else None), in two queries."""
+    place_slugs = {s.place_slug for s in stories if s.cover_photo_slug is None and s.place_slug}
+    place_covers = dict(
+        (
+            await session.execute(
+                select(Place.slug, Place.cover_photo_slug).where(Place.slug.in_(place_slugs))
+            )
+        ).all()
+    ) if place_slugs else {}  # fmt: skip
+    wanted = {s.id: s.cover_photo_slug or place_covers.get(s.place_slug) for s in stories}
+    slugs = {slug for slug in wanted.values() if slug}
+    photos = {
+        p.slug: p
+        for p in (
+            await session.execute(select(PlacePhoto).where(PlacePhoto.slug.in_(slugs)))
+        ).scalars()
+    } if slugs else {}  # fmt: skip
+    return {story_id: photos.get(slug) for story_id, slug in wanted.items()}
+
+
+async def cover_out(session: AsyncSession, story: Story) -> PhotoOut | None:
+    cover = (await covers_for(session, [story]))[story.id]
+    return photo_out(cover) if cover else None
 
 
 @media_router.get("/media/places/{slug}/{width}.webp", include_in_schema=False)

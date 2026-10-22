@@ -6,6 +6,7 @@ import pytest
 from app.config import get_settings
 from app.models import Role
 from app.seed_staff import StaffSeed, seed_staff
+from app.worker import run_one
 
 PASSWORD = "correct horse battery"
 
@@ -71,9 +72,11 @@ async def upload(client, story_id, path, content_type="audio/wav"):
         )
 
 
-async def published_story(client, tone):
+async def published_story(client, tone, sessionmaker):
     story = await new_story(client, **COMPLETE)
     assert (await upload(client, story["id"], tone)).status_code == 200
+    while await run_one(sessionmaker):  # the transcript must exist before publishing
+        pass
     r = await client.post(f"/api/v1/stories/{story['id']}/submit")
     assert r.status_code == 200, r.text
     return r.json()
@@ -242,13 +245,13 @@ async def test_submitting_an_incomplete_story_lists_what_is_missing(client):
     r = await client.post(f"/api/v1/stories/{story['id']}/submit")
     assert r.status_code == 422
     detail = r.json()["detail"]
-    for missing in ("category", "place", "map pin", "language", "audio"):
+    for missing in ("category", "place", "map pin", "language", "audio", "transcript"):
         assert missing in detail
 
 
-async def test_submitting_a_complete_story_publishes_it_for_everyone(client, tone):
+async def test_submitting_a_complete_story_publishes_it_for_everyone(client, tone, sessionmaker):
     await sign_up(client, "salma@example.com")
-    story = await published_story(client, tone)
+    story = await published_story(client, tone, sessionmaker)
     assert story["status"] == "published"
     assert story["published_at"] is not None
 
@@ -259,9 +262,9 @@ async def test_submitting_a_complete_story_publishes_it_for_everyone(client, ton
     assert (await client.get(public.json()["audio"]["url"])).status_code == 200
 
 
-async def test_a_published_story_can_no_longer_be_edited(client, tone):
+async def test_a_published_story_can_no_longer_be_edited(client, tone, sessionmaker):
     await sign_up(client, "salma@example.com")
-    story = await published_story(client, tone)
+    story = await published_story(client, tone, sessionmaker)
     path = f"/api/v1/stories/{story['id']}"
     assert (await client.patch(path, json={"title": "Changed"})).status_code == 409
     assert (await upload(client, story["id"], tone)).status_code == 409
@@ -281,9 +284,9 @@ async def test_draft_audio_is_private(client, tone):
     assert (await client.get(url)).status_code == 200
 
 
-async def test_audio_supports_seeking_with_byte_ranges(client, tone):
+async def test_audio_supports_seeking_with_byte_ranges(client, tone, sessionmaker):
     await sign_up(client, "salma@example.com")
-    story = await published_story(client, tone)
+    story = await published_story(client, tone, sessionmaker)
     url = story["audio"]["url"]
     full = await client.get(url)
     assert full.headers.get("accept-ranges") == "bytes"

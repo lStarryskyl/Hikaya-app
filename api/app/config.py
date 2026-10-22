@@ -33,9 +33,11 @@ class Settings(BaseSettings):
     job_stale_after_seconds: int = 600
 
     # Provider choices. Each step can be switched without code changes.
-    stt_provider: str = "elevenlabs"
-    tts_provider: str = "elevenlabs"
-    llm_provider: str = "azure"
+    # Fake until the real adapters land (#12, #13, #14); then the defaults return to
+    # elevenlabs / azure as docs/DECISIONS.md says.
+    stt_provider: str = "fake"
+    tts_provider: str = "fake"
+    llm_provider: str = "fake"
     video_provider: str = "fal"
 
     # Safety switches

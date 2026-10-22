@@ -6,6 +6,7 @@ from decimal import Decimal
 from enum import StrEnum
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     Float,
@@ -13,7 +14,9 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
+    PrimaryKeyConstraint,
     Text,
+    UniqueConstraint,
     func,
     text,
 )
@@ -213,3 +216,58 @@ class Asset(Base):
     )
 
     __table_args__ = (Index("ix_assets_story_id_kind", "story_id", "kind"),)
+
+
+class TextLayer(Base):
+    """One version of a story's text, as segments that share the verbatim timestamps.
+
+    kinds: verbatim, polished, translation_en, translation_msa.
+    segments: [{"start_ms": int, "end_ms": int, "text": str}, ...]
+    """
+
+    __tablename__ = "text_layers"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    story_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("stories.id", ondelete="CASCADE"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    language: Mapped[str] = mapped_column(Text, nullable=False)
+    segments: Mapped[list] = mapped_column(JSONB, nullable=False)
+    edited: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("story_id", "kind", name="uq_text_layers_story_kind"),
+        CheckConstraint(
+            "kind IN ('verbatim', 'polished', 'translation_en', 'translation_msa')",
+            name="ck_text_layers_kind",
+        ),
+    )
+
+
+class PipelineStep(Base):
+    """The latest job for one step of one story, and the input it was made from.
+
+    A job whose input hash no longer matches its step's is stale: its result is dropped.
+    """
+
+    __tablename__ = "pipeline_steps"
+
+    story_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("stories.id", ondelete="CASCADE"), nullable=False
+    )
+    step: Mapped[str] = mapped_column(Text, nullable=False)
+    input_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (PrimaryKeyConstraint("story_id", "step", name="pk_pipeline_steps"),)

@@ -4,6 +4,7 @@ import {
   Bookmark, ChevronRight, Heart, Pause, Play, RotateCcw, RotateCw, Share2, Volume2,
 } from 'lucide-react'
 import { Badge, Card, PillButton } from '../components/ui'
+import TranscriptView from '../components/TranscriptView'
 import { ApiError } from '../api'
 import { initials } from '../auth'
 // Mock content still used for engagement and for the old slug links until the demo data
@@ -12,6 +13,7 @@ import { stories, transcript, upNext, reflections, imageUrl, avatarUrl } from '.
 import { galleryForPlace, placeCircleImage } from '../data/images'
 import {
   CATEGORY_LABELS, LANGUAGE_LABELS, formatDuration, getStory, isStoryId, type StoryRecord,
+  type TextLayer,
 } from '../stories'
 
 /** What the page needs, whether the story came from the API or from the old mock list. */
@@ -27,6 +29,7 @@ interface PlayerStory {
   coverSrc: string
   audioUrl: string | null
   languageLabel: string | null
+  layers: TextLayer[]
   isMock: boolean
 }
 
@@ -43,6 +46,7 @@ function fromRecord(s: StoryRecord): PlayerStory {
     coverSrc: placeCircleImage(s.place_name, 1000),
     audioUrl: s.audio?.url ?? null,
     languageLabel: s.original_language ? LANGUAGE_LABELS[s.original_language] : null,
+    layers: s.layers,
     isMock: false,
   }
 }
@@ -62,6 +66,7 @@ function fromMock(id: string | undefined): PlayerStory | null {
     coverSrc: imageUrl(s.imageSeed, 1000, 600, s.place),
     audioUrl: null,
     languageLabel: null,
+    layers: [],
     isMock: true,
   }
 }
@@ -191,7 +196,7 @@ function Player({ story }: { story: PlayerStory }) {
         </div>
       </div>
 
-      <div className="grid lg:grid-cols-[1fr_340px] gap-6">
+      <div className="grid lg:grid-cols-[minmax(0,1fr)_340px] gap-6">
         <div>
           <div className="relative h-72 rounded-xl2 overflow-hidden mb-4">
             <img src={story.coverSrc} className="w-full h-full object-cover" alt="" />
@@ -373,6 +378,16 @@ function Player({ story }: { story: PlayerStory }) {
                   </div>
                 ))}
               </div>
+            ) : story.layers.length > 0 ? (
+              <TranscriptView
+                layers={story.layers}
+                elapsedMs={elapsed * 1000}
+                following={playing}
+                onSeek={(ms) => {
+                  seekTo(ms / 1000)
+                  if (canPlay && !playing) togglePlay()
+                }}
+              />
             ) : (
               <Card className="p-4 mb-4 text-[13px] text-muted2 leading-relaxed">
                 The transcript and translations appear here once the story has been processed.

@@ -9,15 +9,15 @@ import {
   Mic,
   Music,
   Trash2,
-  Wand2,
   X,
 } from 'lucide-react'
 import { PillButton } from '../components/ui'
 import JordanMap from '../components/JordanMap'
+import TranscriptEditor from '../components/TranscriptEditor'
 import { ApiError } from '../api'
 import {
-  CATEGORY_LABELS, LANGUAGE_LABELS, createStory, formatDuration, submitStory, updateStory,
-  uploadAudio, type CategoryValue, type LanguageValue, type StoryRecord,
+  CATEGORY_LABELS, LANGUAGE_LABELS, createStory, formatDuration, hasTranscript, submitStory,
+  updateStory, uploadAudio, type CategoryValue, type LanguageValue, type StoryRecord,
 } from '../stories'
 
 // Until the map-click pin arrives (ticket #7), the pin is placed at the chosen place.
@@ -143,7 +143,12 @@ export default function CreateStoryPage() {
     setAudioError('')
     setUploading(true)
     try {
-      const story = draft ?? (await createStory())
+      const fields = { original_language: language || null }
+      const story = draft
+        ? draft.original_language === fields.original_language
+          ? draft
+          : await updateStory(draft.id, fields)
+        : await createStory(fields)
       setDraft(await uploadAudio(story.id, file, file.name))
       setAudioName(file.name)
     } catch (err) {
@@ -164,7 +169,6 @@ export default function CreateStoryPage() {
         place_name: placeName,
         latitude: place?.lat ?? null,
         longitude: place?.lng ?? null,
-        original_language: language || null,
       })
       const published = await submitStory(draft.id)
       navigate(`/story/${published.id}`)
@@ -266,11 +270,35 @@ export default function CreateStoryPage() {
               onChange={onAudioChosen}
               aria-label="Upload an audio recording"
             />
-            <p className="mb-3 text-sm text-ink2">Or upload a recording you already have</p>
+            <label className="mx-auto mb-4 block max-w-xs text-left text-xs font-medium text-muted2">
+              Language you speak in the recording
+              <select
+                value={language}
+                onChange={async (e) => {
+                  const value = e.target.value as LanguageValue
+                  setLanguage(value)
+                  // Changing it after upload re-runs transcription in the right language.
+                  if (draft) {
+                    try {
+                      setDraft(await updateStory(draft.id, { original_language: value }))
+                    } catch (err) {
+                      setAudioError(messageOf(err, 'Could not change the language.'))
+                    }
+                  }
+                }}
+                className={fieldClass}
+              >
+                <option value="" disabled>Choose a language</option>
+                {Object.entries(LANGUAGE_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </label>
+            <p className="mb-3 text-sm text-ink2">Upload a recording</p>
             <PillButton
               type="button"
               variant="outline"
-              disabled={uploading}
+              disabled={uploading || !language}
               onClick={() => audioInputRef.current?.click()}
               className="disabled:opacity-60"
             >
@@ -311,39 +339,7 @@ export default function CreateStoryPage() {
         </div>
       )}
 
-      {step === 2 && (
-        <div className="grid gap-5 text-left md:grid-cols-2">
-          <div className="rounded-xl2 border border-border bg-panel p-5">
-            <div className="mb-3 flex items-center gap-2 text-xs text-muted">
-              <Globe2 size={14} /> Transcribed · Arabic detected
-            </div>
-            <div className="flex h-10 items-end gap-1">
-              {waveHeights.slice(0, 10).map((h, i) => (
-                <span key={i} className="w-1.5 rounded-full bg-gold/70" style={{ height: `${h}%` }} />
-              ))}
-            </div>
-          </div>
-          <div className="rounded-xl2 border border-border bg-panel p-5">
-            <div className="mb-2 text-xs text-muted">Edit the transcript</div>
-            <div
-              contentEditable
-              suppressContentEditableWarning
-              className="min-h-[80px] text-sm leading-relaxed outline-none"
-            >
-              In old Salt, my grandfather kept a brass lantern by the stone stairway. Every dusk he
-              would light it, and the whole quarter knew the day was ending…
-            </div>
-            <div className="mt-4 flex gap-2">
-              <span className="inline-flex items-center gap-1 rounded-full bg-teal-light px-3 py-1.5 text-[11px] font-semibold text-teal">
-                <Wand2 size={12} /> AI polish
-              </span>
-              <span className="rounded-full bg-terracotta-light px-3 py-1.5 text-[11px] font-semibold text-terracotta-dark">
-                Arabic ⇄ English
-              </span>
-            </div>
-          </div>
-        </div>
-      )}
+      {step === 2 && draft && <TranscriptEditor storyId={draft.id} onStory={setDraft} />}
 
       {step === 3 && (
         <div className="space-y-5 text-left">
@@ -498,15 +494,6 @@ export default function CreateStoryPage() {
                 ))}
               </select>
             </label>
-            <label className="block text-xs font-medium text-muted2">
-              Language you spoke
-              <select required value={language} onChange={(e) => setLanguage(e.target.value as LanguageValue)} className={fieldClass}>
-                <option value="" disabled>Choose a language</option>
-                {Object.entries(LANGUAGE_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>{label}</option>
-                ))}
-              </select>
-            </label>
             {publishError && (
               <p role="alert" className="rounded-lg bg-terracotta-light px-3 py-2 text-sm text-terracotta-dark">
                 {publishError}
@@ -527,7 +514,7 @@ export default function CreateStoryPage() {
           <PillButton
             variant="primary"
             onClick={next}
-            disabled={step === 1 && !draft?.audio}
+            disabled={(step === 1 && !draft?.audio) || (step === 2 && !hasTranscript(draft))}
             className="disabled:cursor-not-allowed disabled:opacity-50"
           >
             Continue <ArrowRight size={14} />

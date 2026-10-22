@@ -35,7 +35,12 @@ def migrated_database() -> None:
 async def sessionmaker():
     maker = get_sessionmaker()
     async with maker() as session:
-        await session.execute(text("TRUNCATE jobs, assets, stories, auth_sessions, users CASCADE"))
+        await session.execute(
+            text(
+                "TRUNCATE jobs, pipeline_steps, text_layers, assets, stories, auth_sessions, users"
+                " CASCADE"
+            )
+        )
         await session.commit()
     yield maker
     # The engine is bound to this test's event loop, so drop it after every test.

@@ -18,6 +18,8 @@ export interface MapPin {
   lat: number
   lng: number
   kind: 'featured' | 'dense' | 'recent'
+  /** Accessible name for the pin; falls back to the story title. */
+  label?: string
   /** Optional % fallback for non-map preview layouts */
   x?: number
   y?: number

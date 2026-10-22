@@ -118,7 +118,7 @@ const JordanMap = forwardRef<JordanMapHandle, JordanMapProps>(function JordanMap
     pins.forEach((pin) => {
       const story = stories.find((s) => s.id === pin.storyId)
       const el = pinElement(pin.kind, pin.storyId === focusedStoryId)
-      el.setAttribute('aria-label', story?.title ?? pin.storyId)
+      el.setAttribute('aria-label', pin.label ?? story?.title ?? pin.storyId)
       el.addEventListener('click', (e) => {
         e.stopPropagation()
         onSelectRef.current?.(pin.storyId)

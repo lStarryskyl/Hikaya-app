@@ -1,4 +1,4 @@
-"""Database models: the job queue (Phase 1) and accounts (Phase 2)."""
+"""Database models: the job queue, accounts, and stories with their stored files."""
 
 import uuid
 from datetime import datetime
@@ -8,6 +8,7 @@ from enum import StrEnum
 from sqlalchemy import (
     CheckConstraint,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -108,3 +109,85 @@ class AuthSession(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (Index("ix_auth_sessions_user_id", "user_id"),)
+
+
+class StoryStatus(StrEnum):
+    DRAFT = "draft"
+    MODERATING = "moderating"
+    PUBLISHED = "published"
+    HELD = "held"
+    NEEDS_EDIT = "needs_edit"
+
+
+class Category(StrEnum):
+    CRAFTS = "crafts"
+    DAILY_LIFE = "daily_life"
+    FOLKLORE = "folklore"
+    HISTORY = "history"
+    PERSONAL = "personal"
+
+
+class Language(StrEnum):
+    JORDANIAN = "jordanian"
+    MSA = "msa"
+    ENGLISH = "english"
+
+
+class AssetKind(StrEnum):
+    ORIGINAL_AUDIO = "original_audio"
+    AUDIO = "audio"  # normalised copy used for playback and providers
+
+
+class Story(Base):
+    __tablename__ = "stories"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    author_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    category: Mapped[str | None] = mapped_column(Text)
+    place_name: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    latitude: Mapped[float | None] = mapped_column(Float)
+    longitude: Mapped[float | None] = mapped_column(Float)
+    original_language: Mapped[str | None] = mapped_column(Text)
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=StoryStatus.DRAFT.value
+    )
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_stories_status_published_at", "status", "published_at"),
+        Index("ix_stories_author_id", "author_id"),
+    )
+
+
+class Asset(Base):
+    """A stored file belonging to a story. The file itself lives in storage under `key`."""
+
+    __tablename__ = "assets"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    story_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("stories.id", ondelete="CASCADE"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    storage_key: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    content_type: Mapped[str] = mapped_column(Text, nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (Index("ix_assets_story_id_kind", "story_id", "kind"),)

@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import router as auth_router
 from app.config import get_settings
 from app.db import dispose_engine, get_session
+from app.stories import media_router
+from app.stories import router as stories_router
 
 
 @asynccontextmanager
@@ -42,7 +44,9 @@ async def health(session: AsyncSession = Depends(get_session)) -> JSONResponse:
 api_v1 = APIRouter(prefix="/api/v1")
 api_v1.add_api_route("/health", health, methods=["GET"])
 api_v1.include_router(auth_router)
+api_v1.include_router(stories_router)
 
 app.include_router(api_v1)
+app.include_router(media_router)
 # A plain /health for container health checks.
 app.add_api_route("/health", health, methods=["GET"], include_in_schema=False)

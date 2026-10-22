@@ -16,8 +16,10 @@ __pycache__/
 *.pem
 
 # local media and data written by the app
-data/
-media/
+/data/
+/media/
+/api/data/
+/api/media/
 *.log
 
 # editor and OS

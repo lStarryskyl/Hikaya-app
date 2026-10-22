@@ -83,6 +83,14 @@ jobs:
             sleep 1
           done
           exit 1
+      - name: The demo stories and photos are loaded
+        run: |
+          set -e
+          base=http://localhost:5173
+          test "$(curl -fsS "$base/api/v1/stories?limit=50" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["items"]))')" = 7
+          test "$(curl -fsS $base/api/v1/map/pins | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" = 7
+          photo=$(curl -fsS $base/api/v1/places | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["cover"]["urls"]["480"])')
+          curl -fsS -o /tmp/photo.webp -w '%{content_type}\n' "$base$photo" | grep -q image/webp
       - name: Sign-up, sign-in, roles and sign-out work through the web proxy
         run: |
           set -e

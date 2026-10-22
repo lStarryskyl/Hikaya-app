@@ -6,13 +6,12 @@ import {
 } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import type { MapPin } from '../types'
-import { stories } from '../data/mock'
 
 const JORDAN_CENTER: [number, number] = [36.0, 31.3]
 
 const KIND_COLOR: Record<MapPin['kind'], string> = {
   featured: '#B85C38',
-  dense: '#C08A2E',
+  ordinary: '#C08A2E',
   recent: '#1F7A63',
 }
 
@@ -116,9 +115,8 @@ const JordanMap = forwardRef<JordanMapHandle, JordanMapProps>(function JordanMap
     markersRef.current = []
 
     pins.forEach((pin) => {
-      const story = stories.find((s) => s.id === pin.storyId)
       const el = pinElement(pin.kind, pin.storyId === focusedStoryId)
-      el.setAttribute('aria-label', pin.label ?? story?.title ?? pin.storyId)
+      el.setAttribute('aria-label', pin.label)
       el.addEventListener('click', (e) => {
         e.stopPropagation()
         onSelectRef.current?.(pin.storyId)

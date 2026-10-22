@@ -157,6 +157,14 @@ class Story(Base):
     longitude: Mapped[float | None] = mapped_column(Float)
     original_language: Mapped[str | None] = mapped_column(Text)
     duration_ms: Mapped[int | None] = mapped_column(Integer)
+    # The known place the story is pinned to, matched from place_name; null for other places.
+    place_slug: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("places.slug", ondelete="SET NULL")
+    )
+    cover_photo_slug: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("place_photos.slug", ondelete="SET NULL")
+    )
+    curated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=StoryStatus.DRAFT.value
     )
@@ -271,3 +279,30 @@ class PipelineStep(Base):
     )
 
     __table_args__ = (PrimaryKeyConstraint("story_id", "step", name="pk_pipeline_steps"),)
+
+
+class Place(Base):
+    """A town or site with a photo gallery. Stories link to one when their place matches."""
+
+    __tablename__ = "places"
+
+    slug: Mapped[str] = mapped_column(Text, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    latitude: Mapped[float] = mapped_column(Float, nullable=False)
+    longitude: Mapped[float] = mapped_column(Float, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    cover_photo_slug: Mapped[str | None] = mapped_column(Text)
+
+
+class PlacePhoto(Base):
+    """A gallery photo, stored as WebP at each width in `widths`."""
+
+    __tablename__ = "place_photos"
+
+    slug: Mapped[str] = mapped_column(Text, primary_key=True)
+    place_slug: Mapped[str] = mapped_column(
+        Text, ForeignKey("places.slug", ondelete="CASCADE"), nullable=False
+    )
+    caption: Mapped[str] = mapped_column(Text, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    widths: Mapped[list] = mapped_column(JSONB, nullable=False)

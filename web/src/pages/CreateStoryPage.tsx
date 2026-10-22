@@ -14,6 +14,8 @@ import {
 import { PillButton } from '../components/ui'
 import JordanMap from '../components/JordanMap'
 import TranscriptEditor from '../components/TranscriptEditor'
+import { getPlaces } from '../discover'
+import { useApi } from '../useApi'
 import { ApiError } from '../api'
 import {
   CATEGORY_LABELS, LANGUAGE_LABELS, createStory, formatDuration, hasTranscript, submitStory,
@@ -21,14 +23,6 @@ import {
 } from '../stories'
 
 // Until the map-click pin arrives (ticket #7), the pin is placed at the chosen place.
-const PLACES: { name: string; lat: number; lng: number }[] = [
-  { name: 'Amman', lat: 31.9539, lng: 35.9106 },
-  { name: 'Petra', lat: 30.3285, lng: 35.4444 },
-  { name: 'Madaba', lat: 31.7167, lng: 35.7939 },
-  { name: 'Jerash', lat: 32.2722, lng: 35.8911 },
-  { name: 'Wadi Rum', lat: 29.5759, lng: 35.4204 },
-  { name: 'Aqaba', lat: 29.532, lng: 35.0063 },
-]
 
 const fieldClass =
   'mt-1 w-full rounded-lg border border-border bg-cream px-3 py-2 text-sm text-ink outline-none focus:ring-2 focus:ring-terracotta/30'
@@ -70,7 +64,8 @@ export default function CreateStoryPage() {
   const [language, setLanguage] = useState<LanguageValue | ''>('')
   const [publishing, setPublishing] = useState(false)
   const [publishError, setPublishError] = useState('')
-  const place = PLACES.find((p) => p.name === placeName)
+  const places = useApi(getPlaces, [])
+  const place = places.data?.find((p) => p.name === placeName)
 
   useEffect(() => {
     if (recording) {
@@ -167,8 +162,8 @@ export default function CreateStoryPage() {
         title,
         category: category || null,
         place_name: placeName,
-        latitude: place?.lat ?? null,
-        longitude: place?.lng ?? null,
+        latitude: place?.latitude ?? null,
+        longitude: place?.longitude ?? null,
       })
       const published = await submitStory(draft.id)
       navigate(`/story/${published.id}`)
@@ -445,7 +440,7 @@ export default function CreateStoryPage() {
             <div className="mb-3 text-xs text-muted">Pin on the map</div>
             <div className="relative h-40 overflow-hidden rounded-lg">
               <JordanMap
-                pins={place ? [{ id: 'draft', storyId: 'draft', lat: place.lat, lng: place.lng, kind: 'recent', label: title || 'Your story' }] : []}
+                pins={place ? [{ id: 'draft', storyId: 'draft', lat: place.latitude, lng: place.longitude, kind: 'recent', label: title || 'Your story' }] : []}
                 focusedStoryId={place ? 'draft' : null}
                 interactive={false}
                 zoom={place ? 9 : 6}
@@ -489,8 +484,8 @@ export default function CreateStoryPage() {
               Place
               <select required value={placeName} onChange={(e) => setPlaceName(e.target.value)} className={fieldClass}>
                 <option value="" disabled>Choose a place</option>
-                {PLACES.map((p) => (
-                  <option key={p.name} value={p.name}>{p.name}</option>
+                {(places.data ?? []).map((p) => (
+                  <option key={p.slug} value={p.name}>{p.name}</option>
                 ))}
               </select>
             </label>

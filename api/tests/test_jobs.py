@@ -137,3 +137,27 @@ async def test_stale_running_jobs_go_back_to_the_queue(session):
     back = await _get(session, job.id)
     assert back.status == JobStatus.QUEUED
     assert back.locked_at is None
+
+
+async def test_the_worker_survives_a_database_error(sessionmaker, monkeypatch):
+    """A failing claim (database restarting) must not end the worker loop."""
+    import asyncio
+
+    from app import worker
+
+    calls = 0
+
+    async def flaky(maker, handlers=None):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ConnectionError("database restarting")
+        if calls >= 3:
+            stop.set()
+        return False
+
+    stop = asyncio.Event()
+    monkeypatch.setattr(worker, "run_one", flaky)
+    monkeypatch.setattr(worker.get_settings(), "worker_poll_seconds", 0.01)
+    await asyncio.wait_for(worker.run_forever(stop, sessionmaker), timeout=5)
+    assert calls >= 3

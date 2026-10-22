@@ -53,18 +53,24 @@ async def run_one(
         return True
 
 
-async def run_forever(stop: asyncio.Event) -> None:
+async def run_forever(stop: asyncio.Event, sessionmaker=None) -> None:
     settings = get_settings()
-    sessionmaker = get_sessionmaker()
+    sessionmaker = sessionmaker or get_sessionmaker()
     ticks = 0
     while not stop.is_set():
-        if ticks % 30 == 0:
-            async with sessionmaker() as session:
-                released = await jobs.release_stale(session, settings.job_stale_after_seconds)
-                if released:
-                    log.warning("released %s stale job(s)", released)
+        worked = False
+        try:
+            if ticks % 30 == 0:
+                async with sessionmaker() as session:
+                    released = await jobs.release_stale(session, settings.job_stale_after_seconds)
+                    if released:
+                        log.warning("released %s stale job(s)", released)
+            worked = await run_one(sessionmaker)
+        except Exception:
+            # The database may be restarting; keep the worker alive and try again shortly.
+            log.exception("worker loop error; retrying")
         ticks += 1
-        if not await run_one(sessionmaker):
+        if not worked:
             try:
                 await asyncio.wait_for(stop.wait(), timeout=settings.worker_poll_seconds)
             except TimeoutError:

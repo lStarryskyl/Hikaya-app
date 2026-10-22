@@ -1,4 +1,5 @@
 import { api } from './api'
+import type { Photo } from './discover'
 
 export type CategoryValue = 'crafts' | 'daily_life' | 'folklore' | 'history' | 'personal'
 export type LanguageValue = 'jordanian' | 'msa' | 'english'
@@ -48,6 +49,9 @@ export interface StoryRecord {
   author: { id: string; display_name: string }
   audio: { url: string; content_type: string; original_url: string } | null
   layers: TextLayer[]
+  place_slug: string | null
+  cover: Photo | null
+  curated: boolean
 }
 
 export type StoryFields = Partial<

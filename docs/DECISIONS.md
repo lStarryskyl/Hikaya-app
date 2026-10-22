@@ -98,11 +98,20 @@ These exist on purpose while the build is in progress. Each closes with the tick
 - Submitting a complete story publishes it at once, with no moderation (until #10).
 - The place is picked from a short list of towns with fixed coordinates (until the map-click pin in #7).
 - Transcription, polishing, translation and narration use fake providers by default; the real ones arrive with #12, #13 and #14, and the defaults then return to ElevenLabs and Azure as above.
-- The player still shows mock content for the old sample-story links, and mock reflections and "Up next" (until #6).
+
+## Demo data
+
+- `python -m app.seed_demo` (run on every API start; `SEED_DEMO_DATA=false` turns it off) loads six places with their photo galleries, seven storytellers and seven published stories. Rows have fixed keys, so a re-run refreshes them instead of adding copies.
+- Storyteller accounts cannot sign in. Seeded stories have text in every version but no recording yet; a recording can be added with the demo pack (#8).
+- Publication dates are set relative to the day the seed runs, so "recently added" pins stay recent for the demo.
+- The Arabic lines of the seed stories are placeholders for a native speaker to review. The place photos are not cleared for licensing, and one carries a stock watermark (see `api/seed/places/README.md`).
+- Map pins: a story in the museum is "featured", one published in the last 14 days is "recent", any other is "ordinary".
+- Likes, saves, comments, reflections, follows, notifications, the visit planner and profile editing stay mock. They live in the browser only, in `web/src/demo/mockEngagement.ts`, and nothing is stored.
 
 ## Media
 
 - Every upload is kept untouched. Playback uses a constant-bitrate mono MP3 copy of the same recording, because every browser (including open-source Chromium, which has no AAC) plays MP3 and every speech provider accepts it.
+- Place photos are served as WebP at 480, 960 and 1600 pixels wide; pages pick a size with `srcset`.
 - FFmpeg reads each upload with the demuxer for its declared type and only the `file` protocol, so it never guesses a format from the content.
 
 ## Text pipeline

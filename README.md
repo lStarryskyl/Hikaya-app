@@ -21,14 +21,15 @@ cp .env.example .env      # then set SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD (and
 docker compose up --build
 ```
 
-Open http://localhost:5173. Sign up as a member, or sign in with the staff account you put in `.env`. The API is on http://localhost:8000 (`/health`, `/docs`).
+Open http://localhost:5173. The seven demo stories, their places and photos load on start. Sign up as a member, or sign in with the staff account you put in `.env`. The API is on http://localhost:8000 (`/health`, `/docs`).
 
 ## Develop without Docker
 
 ```bash
 # API: needs PostgreSQL 16 with a `hikaya` database and the `hikaya` role from .env.example
 cd api && pip install -r requirements-dev.txt
-alembic upgrade head && python -m app.seed_staff && uvicorn app.main:app --reload
+alembic upgrade head && python -m app.seed_staff && python -m app.seed_demo
+uvicorn app.main:app --reload
 python -m app.worker            # in a second terminal
 pytest                          # needs a `hikaya_test` database
 
@@ -36,7 +37,7 @@ pytest                          # needs a `hikaya_test` database
 cd web && npm ci && npm run dev
 ```
 
-The feed, map and story screens still show mock data. The backend replaces it phase by phase.
+Likes, comments, follows and notifications are mock and live only in the browser (see `docs/DECISIONS.md`).
 
 ## Secrets
 

@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import audio, pipeline
+from app import audio, pipeline, places
 from app.auth import current_user, current_user_optional
 from app.config import get_settings
 from app.db import get_session
@@ -107,6 +107,9 @@ class StoryOut(BaseModel):
     author: AuthorOut
     audio: AudioOut | None
     layers: list[LayerOut]
+    place_slug: str | None
+    cover: places.PhotoOut | None
+    curated: bool
 
 
 def media_url(asset: Asset) -> str:
@@ -195,7 +198,17 @@ async def to_out(session: AsyncSession, story: Story) -> StoryOut:
             LayerOut(kind=la.kind, language=la.language, edited=la.edited, segments=la.segments)
             for la in await pipeline.layers(session, story.id)
         ],
+        place_slug=story.place_slug,
+        cover=places.photo_out(cover)
+        if (cover := await places.cover_for(session, story))
+        else None,
+        curated=story.curated_at is not None,
     )
+
+
+async def _cover_out(session: AsyncSession, story: Story) -> places.PhotoOut | None:
+    cover = await places.cover_for(session, story)
+    return places.photo_out(cover) if cover else None
 
 
 def _apply(story: Story, fields: StoryFields) -> None:
@@ -213,6 +226,7 @@ async def create_story(
 ) -> StoryOut:
     story = Story(author_id=user.id)
     _apply(story, body)
+    story.place_slug = await places.slug_for_name(session, story.place_name)
     session.add(story)
     await session.commit()
     await session.refresh(story)
@@ -239,6 +253,7 @@ async def edit_story(
     _require_editable(story)
     language_before = story.original_language
     _apply(story, body)
+    story.place_slug = await places.slug_for_name(session, story.place_name)
     await session.commit()
     if story.original_language != language_before:
         await pipeline.start(session, story)

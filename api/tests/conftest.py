@@ -9,11 +9,13 @@ TEST_DATABASE_URL = os.environ.get(
 )
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 
+import httpx  # noqa: E402
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 
 from app.db import dispose_engine, get_sessionmaker  # noqa: E402
+from app.main import app  # noqa: E402
 
 API_DIR = Path(__file__).resolve().parent.parent
 
@@ -30,7 +32,7 @@ def migrated_database() -> None:
 async def sessionmaker():
     maker = get_sessionmaker()
     async with maker() as session:
-        await session.execute(text("TRUNCATE jobs"))
+        await session.execute(text("TRUNCATE jobs, auth_sessions, users CASCADE"))
         await session.commit()
     yield maker
     # The engine is bound to this test's event loop, so drop it after every test.
@@ -41,3 +43,11 @@ async def sessionmaker():
 async def session(sessionmaker):
     async with sessionmaker() as s:
         yield s
+
+
+@pytest_asyncio.fixture
+async def client(sessionmaker):
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+    app.dependency_overrides.clear()

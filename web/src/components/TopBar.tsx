@@ -1,8 +1,10 @@
 import { Link } from 'react-router-dom'
-import { Bell, Plus, Search } from 'lucide-react'
-import { avatarUrl } from '../data/mock'
+import { Bell, LogOut, Plus, Search } from 'lucide-react'
+import { initials, useAuth } from '../auth'
 
 export default function TopBar() {
+  const { user, loading, signOut } = useAuth()
+
   return (
     <header className="sticky top-0 z-30 flex items-center gap-4 border-b border-border bg-panel/95 px-4 py-3 backdrop-blur sm:px-6">
       <div className="mx-auto flex w-full max-w-5xl flex-1 items-center gap-2 rounded-full border border-border bg-[#F1EEE7] px-4 py-2.5">
@@ -28,18 +30,40 @@ export default function TopBar() {
           <Bell size={16} />
           <span className="absolute right-2 top-1.5 h-1.5 w-1.5 rounded-full bg-terracotta" />
         </Link>
-        <Link
-          to="/profile"
-          className="flex items-center gap-2 rounded-full py-0.5 pe-2 hover:bg-cream"
-          aria-label="Open profile"
-        >
-          <img
-            src={avatarUrl('salma-k', 60)}
-            alt=""
-            className="h-8 w-8 rounded-full object-cover"
-          />
-          <span className="hidden text-sm font-medium sm:inline">Salma K.</span>
-        </Link>
+        {loading ? (
+          <div className="h-8 w-24" aria-hidden />
+        ) : user ? (
+          <>
+            <Link
+              to="/profile"
+              className="flex items-center gap-2 rounded-full py-0.5 pe-2 hover:bg-cream"
+              aria-label="Open profile"
+            >
+              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-terracotta-light text-xs font-semibold text-terracotta-dark">
+                {initials(user.display_name)}
+              </span>
+              <span className="hidden max-w-[10rem] truncate text-sm font-medium sm:inline">
+                {user.display_name}
+              </span>
+            </Link>
+            <button
+              type="button"
+              aria-label="Sign out"
+              title="Sign out"
+              onClick={() => void signOut()}
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-border text-ink2 hover:bg-cream"
+            >
+              <LogOut size={16} />
+            </button>
+          </>
+        ) : (
+          <Link
+            to="/signin"
+            className="rounded-full bg-terracotta px-4 py-2 text-sm font-medium text-cream hover:brightness-105"
+          >
+            Sign in
+          </Link>
+        )}
       </div>
     </header>
   )

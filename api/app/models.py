@@ -1,10 +1,21 @@
-"""Database models. Phase 1 holds only the job queue; domain tables arrive in later phases."""
+"""Database models: the job queue (Phase 1) and accounts (Phase 2)."""
 
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from enum import StrEnum
 
-from sqlalchemy import DateTime, Index, Integer, Numeric, Text, func, text
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    Text,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -50,3 +61,50 @@ class Job(Base):
     )
 
     __table_args__ = (Index("ix_jobs_status_run_after", "status", "run_after"),)
+
+
+class Role(StrEnum):
+    MEMBER = "member"
+    REVIEWER = "reviewer"
+    ADMIN = "admin"
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    # Always stored lower-case, so sign-in and duplicate checks are case-insensitive.
+    email: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    display_name: Mapped[str] = mapped_column(Text, nullable=False)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    role: Mapped[str] = mapped_column(Text, nullable=False, server_default=Role.MEMBER.value)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("email = lower(email)", name="ck_users_email_lowercase"),
+        CheckConstraint("role IN ('member', 'reviewer', 'admin')", name="ck_users_role"),
+    )
+
+
+class AuthSession(Base):
+    """A signed-in browser. Only the hash of the cookie token is stored."""
+
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (Index("ix_auth_sessions_user_id", "user_id"),)

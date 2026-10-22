@@ -165,6 +165,9 @@ class Story(Base):
         Text, ForeignKey("place_photos.slug", ondelete="SET NULL")
     )
     curated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The rights statement version the author agreed to when submitting, and when.
+    consent_version: Mapped[str | None] = mapped_column(Text)
+    consented_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=StoryStatus.DRAFT.value
     )
@@ -351,4 +354,29 @@ class ProviderCacheEntry(Base):
     file_key: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class StoryPhoto(Base):
+    """One photo of a story, in order: an upload (WebP at `widths`) or a gallery pick."""
+
+    __tablename__ = "story_photos"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    story_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("stories.id", ondelete="CASCADE"), nullable=False
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    place_photo_slug: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("place_photos.slug", ondelete="CASCADE")
+    )
+    widths: Mapped[list | None] = mapped_column(JSONB)
+
+    __table_args__ = (
+        Index("ix_story_photos_story_position", "story_id", "position"),
+        CheckConstraint(
+            "(place_photo_slug IS NULL) <> (widths IS NULL)", name="ck_story_photos_one_source"
+        ),
     )

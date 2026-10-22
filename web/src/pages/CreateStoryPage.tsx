@@ -1,28 +1,18 @@
-import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from 'react'
+import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import {
-  ArrowRight,
-  Check,
-  Cloud,
-  Globe2,
-  ImagePlus,
-  Mic,
-  Music,
-  Trash2,
-  X,
-} from 'lucide-react'
+import { ArrowRight, Check, Cloud, Globe2, MapPin, Music } from 'lucide-react'
 import { PillButton } from '../components/ui'
 import JordanMap from '../components/JordanMap'
+import PhotoPicker from '../components/PhotoPicker'
+import Recorder, { recordingFormat } from '../components/Recorder'
 import TranscriptEditor from '../components/TranscriptEditor'
-import { getPlaces } from '../discover'
-import { useApi } from '../useApi'
 import { ApiError } from '../api'
+import { getPlaces } from '../discover'
 import {
-  CATEGORY_LABELS, LANGUAGE_LABELS, createStory, formatDuration, hasTranscript, submitStory,
-  updateStory, uploadAudio, type CategoryValue, type LanguageValue, type StoryRecord,
+  CATEGORY_LABELS, LANGUAGE_LABELS, createStory, formatDuration, getConsent, hasTranscript,
+  submitStory, updateStory, uploadAudio, type CategoryValue, type LanguageValue, type StoryRecord,
 } from '../stories'
-
-// Until the map-click pin arrives (ticket #7), the pin is placed at the chosen place.
+import { useApi } from '../useApi'
 
 const fieldClass =
   'mt-1 w-full rounded-lg border border-border bg-cream px-3 py-2 text-sm text-ink outline-none focus:ring-2 focus:ring-terracotta/30'
@@ -31,119 +21,49 @@ function messageOf(err: unknown, fallback: string) {
   return err instanceof ApiError ? err.message : fallback
 }
 
-const steps = ['Record', 'Transcript', 'Visualize', 'Publish']
+const steps = ['Record', 'Transcript', 'Photos', 'Publish']
 
-const infoChips = [
-  { icon: Music, label: 'Audio fidelity', value: 'Lossless WAV' },
-  { icon: Globe2, label: 'Auto-detect', value: 'Bilingual AI' },
-  { icon: Cloud, label: 'Preservation', value: 'Cloud Sync' },
-]
-
-const waveHeights = [30, 55, 80, 45, 65, 95, 50, 70, 40, 85, 60, 35, 75, 55, 90]
-
-type UploadedPhoto = { id: string; name: string; url: string }
+type Pin = { lat: number; lng: number }
 
 export default function CreateStoryPage() {
   const navigate = useNavigate()
   const [step, setStep] = useState(1)
-  const [recording, setRecording] = useState(false)
-  const [seconds, setSeconds] = useState(0)
-  const [animPct, setAnimPct] = useState(0)
-  const [photos, setPhotos] = useState<UploadedPhoto[]>([])
-  const [dragOver, setDragOver] = useState(false)
-  const timerRef = useRef<number | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const audioInputRef = useRef<HTMLInputElement>(null)
   const [draft, setDraft] = useState<StoryRecord | null>(null)
   const [audioName, setAudioName] = useState('')
   const [uploading, setUploading] = useState(false)
   const [audioError, setAudioError] = useState('')
+  const [language, setLanguage] = useState<LanguageValue | ''>('')
   const [title, setTitle] = useState('')
   const [category, setCategory] = useState<CategoryValue | ''>('')
   const [placeName, setPlaceName] = useState('')
-  const [language, setLanguage] = useState<LanguageValue | ''>('')
+  const [pin, setPin] = useState<Pin | null>(null)
+  const [agreed, setAgreed] = useState(false)
   const [publishing, setPublishing] = useState(false)
   const [publishError, setPublishError] = useState('')
+  const audioInputRef = useRef<HTMLInputElement>(null)
   const places = useApi(getPlaces, [])
-  const place = places.data?.find((p) => p.name === placeName)
+  const consent = useApi(getConsent, [])
+  const format = recordingFormat()
 
-  useEffect(() => {
-    if (recording) {
-      timerRef.current = window.setInterval(() => setSeconds((s) => s + 1), 1000)
-    } else if (timerRef.current) {
-      clearInterval(timerRef.current)
-    }
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current)
-    }
-  }, [recording])
+  const infoChips = [
+    { icon: Music, label: 'Recording format', value: format?.label ?? 'Upload only' },
+    { icon: Globe2, label: 'Languages', value: 'Jordanian · MSA · English' },
+    { icon: Cloud, label: 'Saved as', value: 'A private draft' },
+  ]
 
-  useEffect(() => {
-    if (step !== 3) return
-    setAnimPct(0)
-    const id = window.setInterval(() => {
-      setAnimPct((p) => Math.min(100, p + 9))
-    }, 260)
-    return () => clearInterval(id)
-  }, [step])
-
-  useEffect(() => {
-    return () => {
-      photos.forEach((p) => URL.revokeObjectURL(p.url))
-    }
-    // only on unmount
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  const mm = String(Math.floor(seconds / 60)).padStart(2, '0')
-  const ss = String(seconds % 60).padStart(2, '0')
-
-  function addFiles(fileList: FileList | null) {
-    if (!fileList) return
-    const next: UploadedPhoto[] = []
-    Array.from(fileList).forEach((file) => {
-      if (!file.type.startsWith('image/')) return
-      next.push({
-        id: `${file.name}-${file.size}-${Date.now()}-${Math.random()}`,
-        name: file.name,
-        url: URL.createObjectURL(file),
-      })
-    })
-    if (next.length) setPhotos((prev) => [...prev, ...next].slice(0, 8))
+  /** The draft, created on first use, with the chosen language. */
+  async function ensureDraft(): Promise<StoryRecord> {
+    const fields = { original_language: language || null }
+    if (!draft) return createStory(fields)
+    if (draft.original_language === fields.original_language) return draft
+    return updateStory(draft.id, fields)
   }
 
-  function onFileChange(e: ChangeEvent<HTMLInputElement>) {
-    addFiles(e.target.files)
-    e.target.value = ''
-  }
-
-  function onDrop(e: DragEvent) {
-    e.preventDefault()
-    setDragOver(false)
-    addFiles(e.dataTransfer.files)
-  }
-
-  function removePhoto(id: string) {
-    setPhotos((prev) => {
-      const target = prev.find((p) => p.id === id)
-      if (target) URL.revokeObjectURL(target.url)
-      return prev.filter((p) => p.id !== id)
-    })
-  }
-
-  async function onAudioChosen(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    if (!file) return
+  async function sendAudio(file: File) {
     setAudioError('')
     setUploading(true)
     try {
-      const fields = { original_language: language || null }
-      const story = draft
-        ? draft.original_language === fields.original_language
-          ? draft
-          : await updateStory(draft.id, fields)
-        : await createStory(fields)
+      const story = await ensureDraft()
       setDraft(await uploadAudio(story.id, file, file.name))
       setAudioName(file.name)
     } catch (err) {
@@ -153,19 +73,26 @@ export default function CreateStoryPage() {
     }
   }
 
+  function choosePlace(name: string) {
+    setPlaceName(name)
+    const known = places.data?.find((p) => p.name.toLowerCase() === name.trim().toLowerCase())
+    // A known place drops a pin there to start from; a click on the map refines it.
+    if (known && !pin) setPin({ lat: known.latitude, lng: known.longitude })
+  }
+
   async function publish() {
-    if (!draft) return
+    if (!draft || !consent.data) return
     setPublishError('')
     setPublishing(true)
     try {
       await updateStory(draft.id, {
         title,
         category: category || null,
-        place_name: placeName,
-        latitude: place?.latitude ?? null,
-        longitude: place?.longitude ?? null,
+        place_name: placeName.trim(),
+        latitude: pin?.lat ?? null,
+        longitude: pin?.lng ?? null,
       })
-      const published = await submitStory(draft.id)
+      const published = await submitStory(draft.id, consent.data.version)
       navigate(`/story/${published.id}`)
     } catch (err) {
       setPublishError(messageOf(err, 'Publishing failed. Please try again.'))
@@ -173,9 +100,8 @@ export default function CreateStoryPage() {
     }
   }
 
-  function next() {
-    if (step < 4) setStep(step + 1)
-  }
+  const canContinue =
+    (step === 1 && !!draft?.audio) || (step === 2 && hasTranscript(draft)) || step === 3
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-14 text-center">
@@ -233,28 +159,35 @@ export default function CreateStoryPage() {
             Your voice carries the weight of history. Find a quiet space and start sharing.
           </p>
 
-          <div className="flex flex-col items-center rounded-xl2 border border-border bg-panel p-8">
-            <div className="mb-6 flex h-16 items-end gap-1">
-              {waveHeights.map((h, i) => (
-                <span
-                  key={i}
-                  className="w-1.5 rounded-full bg-terracotta/70"
-                  style={{ height: `${recording ? h : h * 0.4}%`, transition: 'height .3s ease' }}
-                />
-              ))}
-            </div>
-            <div className="mb-5 font-serif text-3xl">
-              {mm}:{ss}
-            </div>
-            <button
-              onClick={() => setRecording((r) => !r)}
-              className={`flex h-16 w-16 items-center justify-center rounded-full text-cream transition ${
-                recording ? 'bg-terracotta-dark' : 'bg-terracotta'
-              }`}
+          <label className="mx-auto mb-5 block max-w-xs text-left text-xs font-medium text-muted2">
+            Language you speak in the recording
+            <select
+              value={language}
+              onChange={async (e) => {
+                const value = e.target.value as LanguageValue
+                setLanguage(value)
+                // Changing it after upload re-runs transcription in the right language.
+                if (draft) {
+                  try {
+                    setDraft(await updateStory(draft.id, { original_language: value }))
+                  } catch (err) {
+                    setAudioError(messageOf(err, 'Could not change the language.'))
+                  }
+                }
+              }}
+              className={fieldClass}
             >
-              <Mic size={22} />
-            </button>
-          </div>
+              <option value="" disabled>Choose a language</option>
+              {Object.entries(LANGUAGE_LABELS).map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+          </label>
+
+          <Recorder onRecorded={(file) => void sendAudio(file)} disabled={!language || uploading} />
+          {!language && (
+            <p className="mt-2 text-center text-[11px] text-muted">Choose the language first, then record or upload.</p>
+          )}
 
           <div className="mt-4 rounded-xl2 border border-border bg-panel p-5 text-center">
             <input
@@ -262,34 +195,14 @@ export default function CreateStoryPage() {
               type="file"
               accept="audio/*,video/webm"
               className="hidden"
-              onChange={onAudioChosen}
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                e.target.value = ''
+                if (file) void sendAudio(file)
+              }}
               aria-label="Upload an audio recording"
             />
-            <label className="mx-auto mb-4 block max-w-xs text-left text-xs font-medium text-muted2">
-              Language you speak in the recording
-              <select
-                value={language}
-                onChange={async (e) => {
-                  const value = e.target.value as LanguageValue
-                  setLanguage(value)
-                  // Changing it after upload re-runs transcription in the right language.
-                  if (draft) {
-                    try {
-                      setDraft(await updateStory(draft.id, { original_language: value }))
-                    } catch (err) {
-                      setAudioError(messageOf(err, 'Could not change the language.'))
-                    }
-                  }
-                }}
-                className={fieldClass}
-              >
-                <option value="" disabled>Choose a language</option>
-                {Object.entries(LANGUAGE_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>{label}</option>
-                ))}
-              </select>
-            </label>
-            <p className="mb-3 text-sm text-ink2">Upload a recording</p>
+            <p className="mb-3 text-sm text-ink2">Or upload a recording you already have</p>
             <PillButton
               type="button"
               variant="outline"
@@ -321,144 +234,48 @@ export default function CreateStoryPage() {
               </div>
             ))}
           </div>
-
-          <div className="text-center">
-            <button
-              onClick={next}
-              disabled={!draft?.audio}
-              className="inline-flex items-center gap-1.5 text-sm font-medium text-ink2 disabled:opacity-40"
-            >
-              Done with recording? Continue to transcript <ArrowRight size={14} />
-            </button>
-          </div>
         </div>
       )}
 
       {step === 2 && draft && <TranscriptEditor storyId={draft.id} onStory={setDraft} />}
 
-      {step === 3 && (
-        <div className="space-y-5 text-left">
+      {step === 3 && draft && (
+        <div className="space-y-4 text-left">
           <div className="rounded-xl2 border border-border bg-panel p-6">
-            <div className="mb-2 text-xs text-muted">Generating your animation</div>
-            <div className="mb-2 h-1.5 overflow-hidden rounded-full bg-border">
-              <div className="h-full bg-terracotta transition-all" style={{ width: `${animPct}%` }} />
-            </div>
-            <div className="text-xs text-muted2">
-              {animPct < 100 ? 'Painting scenes from your story…' : 'Animation ready.'}
-            </div>
-          </div>
-
-          <div className="rounded-xl2 border border-border bg-panel p-6">
-            <div className="mb-1 flex items-center justify-between gap-2">
-              <div>
-                <h3 className="font-serif text-lg">Add photos</h3>
-                <p className="text-xs text-muted">
-                  Upload images from this place (max 8). They attach to your story draft.
-                </p>
-              </div>
-              <span className="text-[11px] text-muted">{photos.length}/8</span>
-            </div>
-
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              multiple
-              className="hidden"
-              onChange={onFileChange}
+            <h3 className="font-serif text-lg">Add photos</h3>
+            <p className="mb-4 text-xs text-muted">
+              They become your story's slideshow. The first photo is the cover. Photos are optional.
+            </p>
+            <PhotoPicker
+              storyId={draft.id}
+              photos={draft.photos}
+              placeHint={placeName}
+              onChange={(photos) => setDraft((d) => (d ? { ...d, photos } : d))}
             />
-
-            <div
-              onDragOver={(e) => {
-                e.preventDefault()
-                setDragOver(true)
-              }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={onDrop}
-              className={`mt-4 flex flex-col items-center justify-center rounded-xl border-2 border-dashed px-4 py-10 transition ${
-                dragOver
-                  ? 'border-terracotta bg-terracotta-light/40'
-                  : 'border-border bg-cream/60'
-              }`}
-            >
-              <ImagePlus size={28} className="mb-2 text-terracotta" />
-              <p className="mb-3 text-sm text-ink2">Drag &amp; drop photos here</p>
-              <PillButton
-                variant="primary"
-                className="!py-2 text-xs"
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={photos.length >= 8}
-              >
-                Choose photos
-              </PillButton>
-            </div>
-
-            {photos.length > 0 && (
-              <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                {photos.map((p, i) => (
-                  <div key={p.id} className="group relative overflow-hidden rounded-lg border border-border">
-                    <img src={p.url} alt={p.name} className="aspect-square w-full object-cover" />
-                    {i === 0 && (
-                      <span className="absolute left-1.5 top-1.5 rounded bg-terracotta px-1.5 py-0.5 text-[9px] font-semibold text-cream">
-                        Cover
-                      </span>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => removePhoto(p.id)}
-                      className="absolute right-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-white opacity-90 hover:bg-black"
-                      aria-label={`Remove ${p.name}`}
-                    >
-                      <X size={14} />
-                    </button>
-                    <div className="truncate bg-panel px-1.5 py-1 text-[10px] text-muted">{p.name}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {photos.length > 0 && (
-              <button
-                type="button"
-                onClick={() => {
-                  photos.forEach((p) => URL.revokeObjectURL(p.url))
-                  setPhotos([])
-                }}
-                className="mt-3 inline-flex items-center gap-1 text-xs text-muted hover:text-terracotta"
-              >
-                <Trash2 size={12} /> Clear all photos
-              </button>
-            )}
           </div>
         </div>
       )}
 
-      {step === 4 && (
+      {step === 4 && draft && (
         <div className="grid gap-5 text-left md:grid-cols-2">
           <div className="rounded-xl2 border border-border bg-panel p-5">
-            <div className="mb-3 text-xs text-muted">Pin on the map</div>
-            <div className="relative h-40 overflow-hidden rounded-lg">
+            <div className="mb-3 flex items-center gap-1.5 text-xs text-muted">
+              <MapPin size={13} /> Click the map where the story happened
+            </div>
+            <div className="relative h-56 overflow-hidden rounded-lg">
               <JordanMap
-                pins={place ? [{ id: 'draft', storyId: 'draft', lat: place.latitude, lng: place.longitude, kind: 'recent', label: title || 'Your story' }] : []}
-                focusedStoryId={place ? 'draft' : null}
-                interactive={false}
-                zoom={place ? 9 : 6}
+                pins={pin ? [{ id: 'draft', storyId: 'draft', lat: pin.lat, lng: pin.lng, kind: 'recent', label: title || 'Your story' }] : []}
+                focusedStoryId={pin ? 'draft' : null}
+                zoom={6.3}
                 flyToFocused
+                showNavControl
+                onMapClick={(lng, lat) => setPin({ lat: Number(lat.toFixed(5)), lng: Number(lng.toFixed(5)) })}
                 className="absolute inset-0"
               />
             </div>
-            <p className="mt-2 text-[11px] text-muted2">
-              {place ? `Pinned at ${place.name}` : 'Choose a place to pin your story.'}
+            <p className="mt-2 text-[11px] text-muted2" aria-live="polite">
+              {pin ? `Pinned at ${pin.lat.toFixed(4)}, ${pin.lng.toFixed(4)}` : 'No pin yet.'}
             </p>
-            {photos[0] && (
-              <div className="mt-3 overflow-hidden rounded-lg border border-border">
-                <img src={photos[0].url} alt="" className="h-28 w-full object-cover" />
-                <div className="px-2 py-1.5 text-[11px] text-muted">
-                  Cover photo · {photos.length} attached
-                </div>
-              </div>
-            )}
           </div>
           <form
             className="space-y-3 rounded-xl2 border border-border bg-panel p-5"
@@ -482,49 +299,65 @@ export default function CreateStoryPage() {
             </label>
             <label className="block text-xs font-medium text-muted2">
               Place
-              <select required value={placeName} onChange={(e) => setPlaceName(e.target.value)} className={fieldClass}>
-                <option value="" disabled>Choose a place</option>
+              <input
+                required
+                maxLength={120}
+                list="hikaya-places"
+                value={placeName}
+                onChange={(e) => choosePlace(e.target.value)}
+                placeholder="A town, village or site"
+                className={fieldClass}
+              />
+              <datalist id="hikaya-places">
                 {(places.data ?? []).map((p) => (
-                  <option key={p.slug} value={p.name}>{p.name}</option>
+                  <option key={p.slug} value={p.name} />
                 ))}
-              </select>
+              </datalist>
             </label>
+            {consent.data && (
+              <label className="flex items-start gap-2 rounded-lg bg-cream p-3 text-xs leading-relaxed text-ink2">
+                <input
+                  type="checkbox"
+                  required
+                  checked={agreed}
+                  onChange={(e) => setAgreed(e.target.checked)}
+                  className="mt-0.5 accent-terracotta"
+                />
+                <span>{consent.data.text}</span>
+              </label>
+            )}
             {publishError && (
               <p role="alert" className="rounded-lg bg-terracotta-light px-3 py-2 text-sm text-terracotta-dark">
                 {publishError}
               </p>
             )}
-            <p className="text-sm text-ink2">
-              Your story will appear on the map and in the social feed.
-            </p>
-            <PillButton type="submit" variant="teal" disabled={publishing || !draft?.audio} className="disabled:opacity-60">
+            <PillButton
+              type="submit"
+              variant="teal"
+              disabled={publishing || !agreed || !pin || !consent.data}
+              className="disabled:opacity-60"
+            >
               <Check size={14} /> {publishing ? 'Publishing…' : 'Publish story'}
             </PillButton>
+            {!pin && <p className="text-[11px] text-muted">Place a pin on the map to publish.</p>}
           </form>
         </div>
       )}
 
-      {step !== 3 && step !== 4 && (
-        <div className="mt-2 flex justify-center">
+      {step < 4 && (
+        <div className="mt-6 flex justify-center gap-3">
+          {step > 1 && (
+            <PillButton variant="outline" onClick={() => setStep(step - 1)}>
+              Back
+            </PillButton>
+          )}
           <PillButton
             variant="primary"
-            onClick={next}
-            disabled={(step === 1 && !draft?.audio) || (step === 2 && !hasTranscript(draft))}
+            onClick={() => setStep(step + 1)}
+            disabled={!canContinue}
             className="disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Continue <ArrowRight size={14} />
-          </PillButton>
-        </div>
-      )}
-      {step === 3 && (
-        <div className="mt-6 flex justify-center">
-          <PillButton
-            variant="primary"
-            onClick={next}
-            disabled={animPct < 100}
-            className={animPct < 100 ? 'cursor-not-allowed opacity-50' : ''}
-          >
-            Continue <ArrowRight size={14} />
+            {step === 3 && !draft?.photos.length ? 'Skip photos' : 'Continue'} <ArrowRight size={14} />
           </PillButton>
         </div>
       )}
@@ -540,8 +373,8 @@ export default function CreateStoryPage() {
         <div>
           <div className="mb-2 text-xs font-semibold uppercase tracking-wide">Privacy &amp; rights</div>
           <p className="text-[13px] leading-relaxed text-muted2">
-            You retain full ownership of your narrative. By publishing, you grant Hikaya the right
-            to archive and present it for educational purposes.
+            Your story stays a private draft until you publish it. Publishing needs your agreement
+            to the rights statement shown in the last step.
           </p>
         </div>
         <div>
@@ -555,11 +388,6 @@ export default function CreateStoryPage() {
 
       <footer className="mt-10 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-5 text-[11px] text-muted">
         <div>HIKAYA ARCHIVE PROJECT © {new Date().getFullYear()}</div>
-        <div className="flex gap-4">
-          <span>Documentation</span>
-          <span>Ethics Guidelines</span>
-          <span>Help Center</span>
-        </div>
       </footer>
     </div>
   )

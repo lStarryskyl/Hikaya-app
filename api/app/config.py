@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     # Uploads
     max_audio_upload_mb: float = 100
     max_audio_minutes: float = 60
+    max_photo_upload_mb: float = 15
+    max_photos_per_story: int = 12
 
     # Worker behaviour
     worker_poll_seconds: float = 1.0

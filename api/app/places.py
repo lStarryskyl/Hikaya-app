@@ -59,13 +59,26 @@ def image_demuxer(path: Path) -> str | None:
     return next((demuxer for magic, demuxer in _IMAGE_MAGIC if head.startswith(magic)), None)
 
 
+class NotAnImage(Exception):
+    pass
+
+
 async def convert(source: Path, slug: str, storage: LocalStorage) -> list[int]:
-    """Write a WebP for every width that does not exist yet. Returns the widths available."""
+    """Place photo: write a WebP for every width not converted yet. Returns the widths."""
+    return await convert_image(source, lambda width: photo_key(slug, width), storage)
+
+
+async def convert_image(source: Path, key_for, storage: LocalStorage) -> list[int]:
+    """Write `source` as WebP at every width (skipping files that exist) under key_for(width).
+
+    The demuxer comes from the file's content, so FFmpeg never guesses a format, and only
+    the file protocol is allowed. Raises NotAnImage for anything but PNG, JPEG or WebP.
+    """
     demuxer = image_demuxer(source)
     if demuxer is None:
-        raise RuntimeError(f"{source.name} is not a PNG, JPEG or WebP image")
+        raise NotAnImage(f"{source.name} is not a PNG, JPEG or WebP image")
     for width in WIDTHS:
-        target = storage.path(photo_key(slug, width))
+        target = storage.path(key_for(width))
         if target.is_file():
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -79,7 +92,7 @@ async def convert(source: Path, slug: str, storage: LocalStorage) -> list[int]:
         _, err = await process.communicate()
         if process.returncode != 0:
             target.unlink(missing_ok=True)
-            raise RuntimeError(f"could not convert {source.name}: {err.decode()[-300:]}")
+            raise NotAnImage(f"could not convert {source.name}: {err.decode()[-300:]}")
     return list(WIDTHS)
 
 
@@ -91,8 +104,8 @@ async def slug_for_name(session: AsyncSession, name: str) -> str | None:
     ).scalar_one_or_none()
 
 
-async def covers_for(session: AsyncSession, stories: list[Story]) -> dict:
-    """story id -> cover photo (the story's own, else its place's, else None), in two queries."""
+async def place_covers_for(session: AsyncSession, stories: list[Story]) -> dict:
+    """story id -> place photo cover (the story's chosen one, else its place's), two queries."""
     place_slugs = {s.place_slug for s in stories if s.cover_photo_slug is None and s.place_slug}
     place_covers = dict(
         (
@@ -110,11 +123,6 @@ async def covers_for(session: AsyncSession, stories: list[Story]) -> dict:
         ).scalars()
     } if slugs else {}  # fmt: skip
     return {story_id: photos.get(slug) for story_id, slug in wanted.items()}
-
-
-async def cover_out(session: AsyncSession, story: Story) -> PhotoOut | None:
-    cover = (await covers_for(session, [story]))[story.id]
-    return photo_out(cover) if cover else None
 
 
 @media_router.get("/media/places/{slug}/{width}.webp", include_in_schema=False)

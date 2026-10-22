@@ -34,6 +34,17 @@ export interface PipelineStatus {
   complete: boolean
 }
 
+export interface StoryPhoto {
+  id: string
+  source: 'upload' | 'gallery'
+  photo: Photo
+}
+
+export interface ConsentStatement {
+  version: string
+  text: string
+}
+
 export interface StoryRecord {
   id: string
   title: string
@@ -52,6 +63,8 @@ export interface StoryRecord {
   place_slug: string | null
   cover: Photo | null
   curated: boolean
+  photos: StoryPhoto[]
+  consent: { version: string; at: string } | null
 }
 
 export type StoryFields = Partial<
@@ -124,7 +137,27 @@ export const getStory = (id: string) => api<StoryRecord>(`/stories/${id}`)
 export const createStory = (fields: StoryFields = {}) => api<StoryRecord>('/stories', { body: fields })
 export const updateStory = (id: string, fields: StoryFields) =>
   api<StoryRecord>(`/stories/${id}`, { method: 'PATCH', body: fields })
-export const submitStory = (id: string) => api<StoryRecord>(`/stories/${id}/submit`, { method: 'POST' })
+export const submitStory = (id: string, consentVersion: string) =>
+  api<StoryRecord>(`/stories/${id}/submit`, {
+    body: { consent: true, consent_version: consentVersion },
+  })
+
+export const getConsent = () => api<ConsentStatement>('/stories/consent')
+
+/** Limits the API enforces, shown before a member picks files. */
+export const PHOTO_LIMITS = { types: 'PNG, JPEG or WebP', maxMb: 15, maxCount: 12 }
+
+export function addPhoto(id: string, file: File) {
+  const form = new FormData()
+  form.append('file', file, file.name)
+  return api<StoryPhoto>(`/stories/${id}/photos`, { method: 'POST', form })
+}
+export const pickGalleryPhoto = (id: string, slug: string) =>
+  api<StoryPhoto>(`/stories/${id}/photos/gallery`, { body: { slug } })
+export const reorderPhotos = (id: string, ids: string[]) =>
+  api<StoryPhoto[]>(`/stories/${id}/photos/order`, { method: 'PUT', body: { ids } })
+export const deletePhoto = (id: string, photoId: string) =>
+  api<void>(`/stories/${id}/photos/${photoId}`, { method: 'DELETE' })
 
 export async function uploadAudio(id: string, file: Blob, filename: string): Promise<StoryRecord> {
   const form = new FormData()

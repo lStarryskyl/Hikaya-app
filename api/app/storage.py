@@ -4,6 +4,7 @@ Callers only use keys (like `stories/<id>/<file>`), never paths they build thems
 so a different backend can replace this one without touching them.
 """
 
+import asyncio
 import os
 import re
 from functools import lru_cache
@@ -37,16 +38,19 @@ class LocalStorage:
         path = self.path(key)
         path.parent.mkdir(parents=True, exist_ok=True)
         written = 0
+        # Disk writes happen in a thread so a large upload never blocks the event loop.
+        out = await asyncio.to_thread(open, path, "wb")
         try:
-            with open(path, "wb") as out:
-                while chunk := await upload.read(1024 * 1024):
-                    written += len(chunk)
-                    if written > max_bytes:
-                        raise TooLarge
-                    out.write(chunk)
+            while chunk := await upload.read(1024 * 1024):
+                written += len(chunk)
+                if written > max_bytes:
+                    raise TooLarge
+                await asyncio.to_thread(out.write, chunk)
         except BaseException:
+            out.close()
             path.unlink(missing_ok=True)
             raise
+        out.close()
         return written
 
     def size(self, key: str) -> int:
@@ -55,8 +59,9 @@ class LocalStorage:
     def exists(self, key: str) -> bool:
         return self.path(key).is_file()
 
-    def delete(self, key: str) -> None:
-        self.path(key).unlink(missing_ok=True)
+    def delete(self, *keys: str) -> None:
+        for key in keys:
+            self.path(key).unlink(missing_ok=True)
 
 
 @lru_cache

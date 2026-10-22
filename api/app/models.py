@@ -168,6 +168,28 @@ class Story(Base):
     __table_args__ = (
         Index("ix_stories_status_published_at", "status", "published_at"),
         Index("ix_stories_author_id", "author_id"),
+        CheckConstraint(
+            "status IN ('draft', 'moderating', 'published', 'held', 'needs_edit')",
+            name="ck_stories_status",
+        ),
+        CheckConstraint(
+            "category IS NULL OR category IN "
+            "('crafts', 'daily_life', 'folklore', 'history', 'personal')",
+            name="ck_stories_category",
+        ),
+        CheckConstraint(
+            "original_language IS NULL OR original_language IN ('jordanian', 'msa', 'english')",
+            name="ck_stories_language",
+        ),
+        CheckConstraint(
+            "latitude IS NULL OR latitude BETWEEN -90 AND 90", name="ck_stories_latitude"
+        ),
+        CheckConstraint(
+            "longitude IS NULL OR longitude BETWEEN -180 AND 180", name="ck_stories_longitude"
+        ),
+        CheckConstraint(
+            "status <> 'published' OR published_at IS NOT NULL", name="ck_stories_published_at"
+        ),
     )
 
 

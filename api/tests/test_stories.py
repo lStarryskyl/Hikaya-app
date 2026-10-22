@@ -296,3 +296,22 @@ async def test_audio_supports_seeking_with_byte_ranges(client, tone):
 async def test_unknown_media_is_404(client):
     assert (await client.get("/media/00000000-0000-0000-0000-000000000000")).status_code == 404
     assert (await client.get("/media/../../etc/passwd")).status_code == 404
+
+
+async def test_a_playlist_disguised_as_audio_cannot_make_ffmpeg_read_other_files(client, tmp_path):
+    """An HLS or concat playlist labelled as audio must not pull in files from the server."""
+    await sign_up(client, "salma@example.com")
+    story = await new_story(client)
+    secret = tmp_path / "secret.wav"
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=duration=1", str(secret)], check=True
+    )
+    for name, body, content_type in [
+        ("trick.wav", f"ffconcat version 1.0\nfile '{secret}'\n", "audio/wav"),
+        ("trick.mp3", f"#EXTM3U\n#EXTINF:1,\nfile://{secret}\n#EXT-X-ENDLIST\n", "audio/mpeg"),
+    ]:
+        trick = tmp_path / name
+        trick.write_text(body)
+        assert (
+            await upload(client, story["id"], trick, content_type=content_type)
+        ).status_code == 422

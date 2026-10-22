@@ -91,6 +91,19 @@ Email and password. Sign-up creates a `member` with no email verification. Roles
 - Staff accounts are created when the API starts, from `SEED_ADMIN_*` and `SEED_REVIEWER_*` in `.env`. An existing account keeps its password.
 - Known limits, accepted for a local demo: no login rate limit, no password reset, and sign-up says when an email is already taken. No TOTP and no Google sign-in yet.
 
+## Temporary differences from the plan
+
+These exist on purpose while the build is in progress. Each closes with the ticket named.
+
+- Submitting a complete story publishes it at once, with no moderation (until #10).
+- The place is picked from a short list of towns with fixed coordinates (until the map-click pin in #7).
+- The player still shows mock content for the old sample-story links, and mock reflections and "Up next" (until #6).
+
+## Media
+
+- Every upload is kept untouched. Playback uses a constant-bitrate mono MP3 copy of the same recording, because every browser (including open-source Chromium, which has no AAC) plays MP3 and every speech provider accepts it.
+- FFmpeg reads each upload with the demuxer for its declared type and only the `file` protocol, so it never guesses a format from the content.
+
 ## Defaults I assumed (confirm or change)
 
 - Story creation is real (record or upload, AI steps, publish). Only the social interactions and the AI video samples are mock.

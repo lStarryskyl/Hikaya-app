@@ -3,6 +3,24 @@
 import asyncio
 from pathlib import Path
 
+# Accepted upload types: file extension to store it under, and the FFmpeg demuxer to read it
+# with. Naming the demuxer means FFmpeg never guesses from the content, so a playlist dressed
+# up as audio can never make it open other files or URLs.
+UPLOAD_FORMATS: dict[str, tuple[str, str]] = {
+    "audio/wav": (".wav", "wav"),
+    "audio/x-wav": (".wav", "wav"),
+    "audio/wave": (".wav", "wav"),
+    "audio/webm": (".webm", "matroska"),
+    "video/webm": (".webm", "matroska"),
+    "audio/ogg": (".ogg", "ogg"),
+    "audio/mpeg": (".mp3", "mp3"),
+    "audio/mp3": (".mp3", "mp3"),
+    "audio/mp4": (".m4a", "mov"),
+    "audio/x-m4a": (".m4a", "mov"),
+    "audio/aac": (".aac", "aac"),
+    "audio/flac": (".flac", "flac"),
+}
+
 NORMALISED_CONTENT_TYPE = "audio/mpeg"
 NORMALISED_EXTENSION = ".mp3"
 _TIMEOUT_SECONDS = 300
@@ -27,13 +45,20 @@ async def _run(*args: str) -> bytes:
     return stdout
 
 
-async def normalise(source: Path, target: Path) -> None:
+def upload_format(content_type: str | None) -> tuple[str, str] | None:
+    """(extension, demuxer) for an accepted upload type such as `audio/webm;codecs=opus`."""
+    base = (content_type or "").split(";")[0].strip().lower()
+    return UPLOAD_FORMATS.get(base)
+
+
+async def normalise(source: Path, target: Path, demuxer: str) -> None:
     """Constant-bitrate mono MP3: every browser plays it (open-source Chromium has no AAC),
     every speech provider accepts it, and constant bitrate keeps seeking exact."""
     target.parent.mkdir(parents=True, exist_ok=True)
     try:
         await _run(
-            "ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(source),
+            "ffmpeg", "-nostdin", "-v", "error", "-y",
+            "-protocol_whitelist", "file", "-f", demuxer, "-i", str(source),
             "-vn", "-ac", "1", "-ar", "44100", "-c:a", "libmp3lame", "-b:a", "96k",
             str(target),
         )  # fmt: skip

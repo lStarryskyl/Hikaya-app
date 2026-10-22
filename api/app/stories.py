@@ -37,22 +37,6 @@ media_router = APIRouter(tags=["media"])
 STAFF_ROLES = {Role.REVIEWER.value, Role.ADMIN.value}
 EDITABLE = {StoryStatus.DRAFT.value, StoryStatus.NEEDS_EDIT.value}
 
-# Browsers' recorders produce WebM/Opus, Ogg or MP4; people upload WAV, MP3, M4A and friends.
-AUDIO_TYPES = {
-    "audio/wav": ".wav",
-    "audio/x-wav": ".wav",
-    "audio/wave": ".wav",
-    "audio/webm": ".webm",
-    "video/webm": ".webm",
-    "audio/ogg": ".ogg",
-    "audio/mpeg": ".mp3",
-    "audio/mp3": ".mp3",
-    "audio/mp4": ".m4a",
-    "audio/x-m4a": ".m4a",
-    "audio/aac": ".aac",
-    "audio/flac": ".flac",
-}
-
 Title = Annotated[str, StringConstraints(strip_whitespace=True, max_length=120)]
 PlaceName = Annotated[str, StringConstraints(strip_whitespace=True, max_length=120)]
 
@@ -224,10 +208,11 @@ async def upload_audio(
     _require_editable(story)
     settings = get_settings()
 
-    content_type = (file.content_type or "").split(";")[0].strip().lower()
-    extension = AUDIO_TYPES.get(content_type)
-    if extension is None:
+    accepted = audio.upload_format(file.content_type)
+    if accepted is None:
         raise HTTPException(415, "Upload an audio file such as WebM, Ogg, MP3, M4A or WAV.")
+    extension, demuxer = accepted
+    content_type = (file.content_type or "").split(";")[0].strip().lower()
 
     stem = f"stories/{story.id}/{uuid.uuid4().hex}"
     original_key, playable_key = (
@@ -243,19 +228,19 @@ async def upload_audio(
         ) from None
 
     try:
-        await audio.normalise(storage.path(original_key), storage.path(playable_key))
+        await audio.normalise(storage.path(original_key), storage.path(playable_key), demuxer)
         length_ms = await audio.duration_ms(storage.path(playable_key))
     except audio.NotAudio:
-        storage.delete(original_key)
-        storage.delete(playable_key)
+        storage.delete(original_key, playable_key)
         raise HTTPException(422, "That file is not a readable audio recording.") from None
     if length_ms > settings.max_audio_minutes * 60_000:
-        storage.delete(original_key)
-        storage.delete(playable_key)
+        storage.delete(original_key, playable_key)
         raise HTTPException(
             422, f"Recordings can be up to {settings.max_audio_minutes:g} minutes long."
         )
 
+    # Lock the story so two uploads at once cannot both replace the same old files.
+    await session.refresh(story, with_for_update=True)
     old = await _audio_assets(session, story.id)
     for asset in old.values():
         await session.delete(asset)
@@ -278,10 +263,13 @@ async def upload_audio(
         ]
     )
     story.duration_ms = length_ms
-    await session.commit()
-    # Files go only after the database no longer points at them.
-    for asset in old.values():
-        storage.delete(asset.storage_key)
+    try:
+        await session.commit()
+    except BaseException:
+        storage.delete(original_key, playable_key)
+        raise
+    # Old files go only after the database no longer points at them.
+    storage.delete(*(asset.storage_key for asset in old.values()))
     await session.refresh(story)
     return await to_out(session, story)
 
@@ -334,6 +322,7 @@ async def serve_media(
     path = storage.path(asset.storage_key)
     if not path.is_file():
         raise HTTPException(404, "Not found.")
-    # Private files must not sit in shared caches.
-    cache = "public, max-age=3600" if story.status == StoryStatus.PUBLISHED else "private, no-store"
+    # Revalidate every time: a published story can later be held, and its files must then stop
+    # being served at once. Private files never enter any cache.
+    cache = "no-cache" if story.status == StoryStatus.PUBLISHED else "private, no-store"
     return FileResponse(path, media_type=asset.content_type, headers={"Cache-Control": cache})

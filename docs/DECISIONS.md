@@ -73,6 +73,9 @@ Research with sources and prices: `docs/research/`.
 - A total of about 25 USD of card-paid spending for the whole test: ElevenLabs, video, and anything else outside Azure. Azure has its own separate budget.
 - The code keeps a spending ledger. It reserves the estimated cost before every paid call and refuses the call when a cap would be exceeded. The caps are settings.
 - Every STT, language-model and TTS result is cached by a hash of its input, so repeated runs cost nothing.
+- Every provider call goes through one gateway (`api/app/gateway.py`). In order: a cached result for the same operation, provider and input is returned at once (no cost, no call, whatever the live switch says); a free provider just runs; a paid provider needs `LIVE_AI_ENABLED=true` and a reservation that fits the caps, which is committed after the call or released if it fails. Refused calls are kept in the ledger as released rows, so attempts stay visible.
+- Caps: `SPEND_CAP_USD_TOTAL` and `SPEND_CAP_USD_DAILY` for the card budget, `SPEND_CAP_USD_AZURE` for Azure. The ledger records the estimate as the cost, because providers do not report a bill per call.
+- Demo pack: run the demo stories once with live AI on, then `python -m app.demo_pack export`; on the demo laptop, `python -m app.demo_pack import`. The pack lives in `demo-pack/`, which is git-ignored because it can contain recordings.
 - Live AI calls are off by default during the demo. The demo stories use pre-generated outputs. A toggle turns live AI on.
 - API keys live only in `.env`, which is never committed. This repository is public.
 

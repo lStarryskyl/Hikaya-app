@@ -306,3 +306,49 @@ class PlacePhoto(Base):
     caption: Mapped[str] = mapped_column(Text, nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     widths: Mapped[list] = mapped_column(JSONB, nullable=False)
+
+
+class SpendEntry(Base):
+    """One paid provider call: reserved before the call, then committed or released."""
+
+    __tablename__ = "spend_entries"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    operation: Mapped[str] = mapped_column(Text, nullable=False)
+    budget: Mapped[str] = mapped_column(Text, nullable=False)  # card | azure
+    estimated_usd: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
+    actual_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    state: Mapped[str] = mapped_column(Text, nullable=False, server_default="reserved")
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("budget IN ('card', 'azure')", name="ck_spend_entries_budget"),
+        CheckConstraint(
+            "state IN ('reserved', 'committed', 'released')", name="ck_spend_entries_state"
+        ),
+        Index("ix_spend_entries_budget_created_at", "budget", "created_at"),
+    )
+
+
+class ProviderCacheEntry(Base):
+    """A provider result, keyed by a hash of the operation, provider and input."""
+
+    __tablename__ = "provider_cache"
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    operation: Mapped[str] = mapped_column(Text, nullable=False)
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    result: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    # A stored file the result points at (narration audio, video), if any.
+    file_key: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

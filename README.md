@@ -39,6 +39,17 @@ cd web && npm ci && npm run dev
 
 Likes, comments, follows and notifications are mock and live only in the browser (see `docs/DECISIONS.md`).
 
+## Demo pack (play AI results without paying on stage)
+
+```bash
+# On a machine with keys and LIVE_AI_ENABLED=true: process the demo stories, then
+docker compose exec api python -m app.demo_pack export
+# On the demo laptop (live AI off):
+docker compose exec api python -m app.demo_pack import
+```
+
+Every AI result is cached by its input, so the same recordings replay instantly at no cost.
+
 ## Secrets
 
 This repository is public. Never commit keys. Copy `.env.example` to `.env` and fill it in locally.

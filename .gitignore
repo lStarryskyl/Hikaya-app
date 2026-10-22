@@ -27,3 +27,7 @@ __pycache__/
 Thumbs.db
 .idea/
 .vscode/
+
+# demo packs (exported AI results; may contain recordings)
+demo-pack/
+*.demo-pack.tar.gz

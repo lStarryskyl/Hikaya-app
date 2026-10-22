@@ -18,13 +18,13 @@ from dataclasses import dataclass
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import jobs
+from app import gateway, jobs
 from app.config import get_settings
 from app.db import get_sessionmaker
 from app.errors import INTERNAL_PREFIX, UserFacingError
 from app.handlers import handler
 from app.models import Asset, AssetKind, Job, JobStatus, PipelineStep, Story, TextLayer
-from app.providers import Segment, language_model, speech_to_text
+from app.providers import Segment, Transcript, language_model, speech_to_text
 from app.storage import get_storage
 
 VERBATIM, POLISHED = "verbatim", "polished"
@@ -200,6 +200,20 @@ async def _queue_translations(session: AsyncSession, story: Story) -> None:
 # --- job handlers ---
 
 
+async def _llm(operation: str, language: str, texts: list[str], target: str | None = None):
+    """Polish or translate through the gateway (cache, live switch, spending ledger)."""
+    llm = language_model()
+
+    async def run() -> dict:
+        if operation == "polish":
+            return {"texts": await llm.polish(texts, language)}
+        return {"texts": await llm.translate(texts, language, target)}
+
+    parts = (language, target or "", json.dumps(texts, ensure_ascii=False))
+    result = await gateway.call(operation, llm, parts, sum(len(t) for t in texts), run)
+    return result["texts"]
+
+
 @handler("transcribe")
 async def transcribe(payload: dict) -> dict:
     async with get_sessionmaker()() as session:
@@ -211,8 +225,19 @@ async def transcribe(payload: dict) -> dict:
                 select(Asset).where(Asset.story_id == story.id, Asset.kind == AssetKind.AUDIO)
             )
         ).scalar_one()
-        result = await speech_to_text().transcribe(
-            get_storage().path(asset.storage_key), story.original_language, story.duration_ms or 0
+        stt = speech_to_text()
+        path = get_storage().path(asset.storage_key)
+        language, duration = story.original_language, story.duration_ms or 0
+
+        async def run() -> dict:
+            t = await stt.transcribe(path, language, duration)
+            return {"language": t.language, "segments": [_segment(x) for x in t.segments]}
+
+        raw = await gateway.call(
+            "transcribe", stt, (payload["digest"], language or "auto", str(duration)), duration, run
+        )
+        result = Transcript(
+            language=raw["language"], segments=[Segment(**x) for x in raw["segments"]]
         )
         if not await _is_current(session, payload, lock=True):
             return STALE
@@ -243,7 +268,7 @@ async def polish(payload: dict) -> dict:
         if story is None or not await _is_current(session, payload):
             return STALE
         verbatim = await _layer(session, story.id, VERBATIM)
-        texts = await language_model().polish(_texts(verbatim), verbatim.language)
+        texts = await _llm("polish", verbatim.language, _texts(verbatim))
         if not await _is_current(session, payload, lock=True):
             return STALE
         await _save_layer(
@@ -263,7 +288,7 @@ async def translate(payload: dict) -> dict:
             return STALE
         target = payload["target"]
         polished = await _layer(session, story.id, POLISHED)
-        texts = await language_model().translate(_texts(polished), polished.language, target)
+        texts = await _llm("translate", polished.language, _texts(polished), target)
         if not await _is_current(session, payload, lock=True):
             return STALE
         await _save_layer(

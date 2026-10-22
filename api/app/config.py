@@ -48,6 +48,8 @@ class Settings(BaseSettings):
     enable_ai_video: bool = False
     spend_cap_usd_total: float = 25.0
     spend_cap_usd_daily: float = 10.0
+    # Azure is paid from its own budget, so it has its own cap.
+    spend_cap_usd_azure: float = 50.0
 
 
 @lru_cache

@@ -1,0 +1,9 @@
+line-length = 100
+target-version = "py311"
+extend-exclude = [".venv", "migrations/versions"]
+
+[lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends"]

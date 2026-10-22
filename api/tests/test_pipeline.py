@@ -406,6 +406,7 @@ async def test_publishing_waits_for_the_transcript(client, sessionmaker, tones):
     r = await client.post(f"/api/v1/stories/{story_id}/submit", json=CONSENT)
     assert r.status_code == 200
 
+    await drain(sessionmaker)  # the moderation check publishes it
     client.cookies.clear()
     public = await get_story(client, story_id)
     assert {layer["kind"] for layer in public["layers"]} == {
@@ -500,7 +501,8 @@ async def test_a_version_cannot_be_edited_while_it_is_being_made(client, session
 
 async def test_steps_of_a_published_story_cannot_be_retried(client, sessionmaker, tones):
     await sign_up(client)
-    story_id = await story_with_audio(client, tones["short"])
+    # English, so the story can be submitted while its (MSA) translation has failed.
+    story_id = await story_with_audio(client, tones["short"], language="english")
     fake.FAIL_ON.add("translate")
     await drain(sessionmaker)
     fake.FAIL_ON.clear()
@@ -512,5 +514,5 @@ async def test_steps_of_a_published_story_cannot_be_retried(client, sessionmaker
     assert (
         await client.post(f"/api/v1/stories/{story_id}/submit", json=CONSENT)
     ).status_code == 200
-    r = await client.post(f"/api/v1/stories/{story_id}/pipeline/translate_en/retry")
+    r = await client.post(f"/api/v1/stories/{story_id}/pipeline/translate_msa/retry")
     assert r.status_code == 409

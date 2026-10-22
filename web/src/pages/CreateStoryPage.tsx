@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowRight, Check, Cloud, Globe2, MapPin, Music } from 'lucide-react'
 import { PillButton } from '../components/ui'
 import JordanMap from '../components/JordanMap'
@@ -9,7 +9,8 @@ import TranscriptEditor from '../components/TranscriptEditor'
 import { ApiError } from '../api'
 import { getPlaces } from '../discover'
 import {
-  CATEGORY_LABELS, LANGUAGE_LABELS, createStory, formatDuration, getConsent, getLimits, hasTranscript,
+  CATEGORY_LABELS, LANGUAGE_LABELS, createStory, formatDuration, getConsent, getLimits, getStory,
+  hasTranscript,
   submitStory, updateStory, uploadAudio, type CategoryValue, type LanguageValue, type StoryRecord,
 } from '../stories'
 import { useApi } from '../useApi'
@@ -45,6 +46,38 @@ export default function CreateStoryPage() {
   const consent = useApi(getConsent, [])
   const limits = useApi(getLimits, [])
   const format = recordingFormat()
+  const [params] = useSearchParams()
+  const resumeId = params.get('story')
+  const [resumeError, setResumeError] = useState('')
+
+  // /create?story=<id> picks up a draft, or a story a reviewer sent back, where it was left.
+  useEffect(() => {
+    if (!resumeId) return
+    let cancelled = false
+    getStory(resumeId)
+      .then((story) => {
+        if (cancelled) return
+        if (story.status !== 'draft' && story.status !== 'needs_edit') {
+          navigate(`/story/${story.id}`, { replace: true })
+          return
+        }
+        setDraft(story)
+        setLanguage(story.original_language ?? '')
+        setTitle(story.title)
+        setCategory(story.category ?? '')
+        setPlaceName(story.place_name)
+        if (story.latitude !== null && story.longitude !== null)
+          setPin({ lat: story.latitude, lng: story.longitude })
+        if (story.audio) {
+          setAudioName('Your recording')
+          setStep(2)
+        }
+      })
+      .catch((e) => !cancelled && setResumeError(messageOf(e, 'That story could not be opened.')))
+    return () => {
+      cancelled = true
+    }
+  }, [resumeId, navigate])
 
   const infoChips = [
     { icon: Music, label: 'Recording format', value: format?.label ?? 'Upload only' },
@@ -175,6 +208,18 @@ export default function CreateStoryPage() {
           )
         })}
       </div>
+
+      {resumeError && (
+        <p role="alert" className="mb-6 rounded-lg bg-terracotta-light px-3 py-2 text-sm text-terracotta-dark">
+          {resumeError}
+        </p>
+      )}
+      {draft?.status === 'needs_edit' && draft.review?.note && (
+        <div role="status" className="mb-6 rounded-xl2 border border-gold/40 bg-gold-light/60 p-4 text-left text-sm text-ink2">
+          <div className="font-semibold text-ink">The reviewer asked for changes</div>
+          <q className="mt-1 block italic">{draft.review.note}</q>
+        </div>
+      )}
 
       {step === 1 && (
         <div className="text-left">
@@ -356,7 +401,7 @@ export default function CreateStoryPage() {
               disabled={publishing || !agreed || !pin || !consent.data}
               className="disabled:opacity-60"
             >
-              <Check size={14} /> {publishing ? 'Publishing…' : 'Publish story'}
+              <Check size={14} /> {publishing ? 'Publishing…' : draft?.status === 'needs_edit' ? 'Resubmit story' : 'Publish story'}
             </PillButton>
             {!pin && <p className="text-[11px] text-muted">Place a pin on the map to publish.</p>}
           </form>

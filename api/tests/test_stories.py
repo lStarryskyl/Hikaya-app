@@ -80,7 +80,9 @@ async def published_story(client, tone, sessionmaker):
         pass
     r = await client.post(f"/api/v1/stories/{story['id']}/submit", json=CONSENT)
     assert r.status_code == 200, r.text
-    return r.json()
+    while await run_one(sessionmaker):  # the moderation check publishes it
+        pass
+    return (await client.get(f"/api/v1/stories/{story['id']}")).json()
 
 
 # --- drafts ---

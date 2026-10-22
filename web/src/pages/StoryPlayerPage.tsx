@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
   Bookmark, ChevronRight, Heart, Pause, Play, RotateCcw, RotateCw, Share2, Volume2,
 } from 'lucide-react'
 import { Badge, Card, PillButton } from '../components/ui'
 import TranscriptView from '../components/TranscriptView'
+import StoryStatusBanner from '../components/StoryStatusBanner'
 import { ApiError } from '../api'
 import { initials } from '../auth'
 import Photo from '../components/Photo'
@@ -32,6 +33,7 @@ interface PlayerStory {
   languageLabel: string | null
   layers: TextLayer[]
   photos: PhotoData[]
+  record: StoryRecord
 }
 
 function fromRecord(s: StoryRecord): PlayerStory {
@@ -50,6 +52,7 @@ function fromRecord(s: StoryRecord): PlayerStory {
     languageLabel: s.original_language ? LANGUAGE_LABELS[s.original_language] : null,
     layers: s.layers,
     photos: s.photos.map((p) => p.photo),
+    record: s,
   }
 }
 
@@ -65,6 +68,10 @@ type Load = { state: 'loading' } | { state: 'missing' } | { state: 'error'; mess
 export default function StoryPlayerPage() {
   const { id } = useParams()
   const [load, setLoad] = useState<Load>({ state: 'loading' })
+  const onStoryChange = useCallback(
+    (record: StoryRecord) => setLoad({ state: 'ready', story: fromRecord(record) }),
+    [],
+  )
 
   useEffect(() => {
     if (!isStoryId(id)) {
@@ -105,10 +112,16 @@ export default function StoryPlayerPage() {
       </div>
     )
   }
-  return <Player story={load.story} />
+  return <Player story={load.story} onStoryChange={onStoryChange} />
 }
 
-function Player({ story }: { story: PlayerStory }) {
+function Player({
+  story,
+  onStoryChange,
+}: {
+  story: PlayerStory
+  onStoryChange: (record: StoryRecord) => void
+}) {
   const audioRef = useRef<HTMLAudioElement>(null)
   const [tab, setTab] = useState<'transcript' | 'accessibility'>('transcript')
   const [playing, setPlaying] = useState(false)
@@ -183,6 +196,8 @@ function Player({ story }: { story: PlayerStory }) {
           </button>
         </div>
       </div>
+
+      <StoryStatusBanner story={story.record} onChange={onStoryChange} />
 
       <div className="grid lg:grid-cols-[minmax(0,1fr)_340px] gap-6">
         <div>

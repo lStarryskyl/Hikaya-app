@@ -7,6 +7,7 @@ so a different backend can replace this one without touching them.
 import asyncio
 import os
 import re
+import shutil
 from functools import lru_cache
 from pathlib import Path
 
@@ -58,6 +59,12 @@ class LocalStorage:
 
     def exists(self, key: str) -> bool:
         return self.path(key).is_file()
+
+    def delete_tree(self, prefix: str) -> None:
+        """Remove a whole folder of stored files, such as everything for one story."""
+        path = self.path(prefix)
+        if path.is_dir():
+            shutil.rmtree(path)
 
     def delete(self, *keys: str) -> None:
         for key in keys:

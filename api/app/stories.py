@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import audio, consent, photos, pipeline, places
+from app import audio, consent, moderation, photos, pipeline, places
 from app.auth import current_user, current_user_optional
 from app.config import get_settings
 from app.db import get_session
@@ -114,6 +114,36 @@ class PhotoOrder(BaseModel):
     ids: list[uuid.UUID]
 
 
+class LabelOut(BaseModel):
+    label: str
+    raised: bool
+    reason: str
+
+
+class ModerationOut(BaseModel):
+    held: bool
+    labels: list[LabelOut]
+    judged_at: datetime
+
+
+class ReviewOut(BaseModel):
+    note: str | None
+    at: datetime | None
+
+
+class MyStory(BaseModel):
+    id: uuid.UUID
+    title: str
+    status: str
+    place_name: str
+    cover: places.PhotoOut | None
+    updated_at: datetime
+    published_at: datetime | None
+    # Labels that held the story (held only), and the reviewer's note (needs_edit only).
+    held_for: list[str]
+    review_note: str | None
+
+
 class StoryOut(BaseModel):
     id: uuid.UUID
     title: str
@@ -134,6 +164,9 @@ class StoryOut(BaseModel):
     curated: bool
     photos: list[photos.StoryPhotoOut]
     consent: ConsentOut | None
+    # For the author and staff only; None for everyone else.
+    moderation: ModerationOut | None = None
+    review: ReviewOut | None = None
 
 
 def media_url(asset: Asset) -> str:
@@ -187,7 +220,21 @@ async def _audio_assets(session: AsyncSession, story_id: uuid.UUID) -> dict[str,
     return {a.kind: a for a in rows.scalars()}
 
 
-async def to_out(session: AsyncSession, story: Story) -> StoryOut:
+def _moderation_out(result) -> ModerationOut | None:
+    if result is None:
+        return None
+    return ModerationOut(
+        held=result.held,
+        labels=[
+            LabelOut(label=label, raised=v["raised"], reason=v["reason"])
+            for label, v in result.labels.items()
+        ],
+        judged_at=result.created_at,
+    )
+
+
+async def to_out(session: AsyncSession, story: Story, *, private: bool = True) -> StoryOut:
+    """`private` adds moderation and review details; only for the author and staff."""
     author = await session.get(User, story.author_id)
     assets = await _audio_assets(session, story.id)
     playable, original = assets.get(AssetKind.AUDIO), assets.get(AssetKind.ORIGINAL_AUDIO)
@@ -198,7 +245,7 @@ async def to_out(session: AsyncSession, story: Story) -> StoryOut:
             content_type=playable.content_type,
             original_url=media_url(original),
         )
-    return StoryOut(
+    out = StoryOut(
         id=story.id,
         title=story.title,
         category=story.category,
@@ -226,6 +273,11 @@ async def to_out(session: AsyncSession, story: Story) -> StoryOut:
         ),
         curated=story.curated_at is not None,
     )
+    if private:
+        out.moderation = _moderation_out(await moderation.latest(session, story.id))
+        if story.review_note or story.reviewed_at:
+            out.review = ReviewOut(note=story.review_note, at=story.reviewed_at)
+    return out
 
 
 async def _apply(session: AsyncSession, story: Story, fields: StoryFields) -> None:
@@ -284,7 +336,9 @@ async def read_story(
     user: User | None = Depends(current_user_optional),
     session: AsyncSession = Depends(get_session),
 ) -> StoryOut:
-    return await to_out(session, await _visible_story(session, story_id, user))
+    story = await _visible_story(session, story_id, user)
+    private = user is not None and (user.id == story.author_id or user.role in STAFF_ROLES)
+    return await to_out(session, story, private=private)
 
 
 @router.patch("/{story_id}", response_model=StoryOut)
@@ -384,7 +438,9 @@ async def upload_audio(
     return await to_out(session, story)
 
 
-def missing_for_publishing(story: Story, has_audio: bool, has_transcript: bool) -> list[str]:
+def missing_for_publishing(
+    story: Story, has_audio: bool, has_transcript: bool, has_english: bool
+) -> list[str]:
     checks = [
         ("title", bool(story.title)),
         ("category", story.category is not None),
@@ -393,6 +449,7 @@ def missing_for_publishing(story: Story, has_audio: bool, has_transcript: bool) 
         ("language", story.original_language is not None),
         ("audio", has_audio),
         ("transcript (still being prepared)", has_transcript),
+        ("English translation (still being prepared)", has_english),
     ]
     return [name for name, ok in checks if not ok]
 
@@ -411,15 +468,16 @@ async def submit_story(
         story,
         bool(await _audio_assets(session, story.id)),
         {pipeline.VERBATIM, pipeline.POLISHED} <= kinds,
+        # Moderation also reads the English translation of an Arabic story.
+        story.original_language == "english" or moderation.ENGLISH in kinds,
     )
     if missing:
         raise HTTPException(422, "Add these before publishing: " + ", ".join(missing) + ".")
     if body is None or not body.consent or body.consent_version != consent.VERSION:
         raise HTTPException(422, "Agree to the current rights statement before publishing.")
     story.consent_version, story.consented_at = consent.VERSION, datetime.now(UTC)
-    # Moderation arrives in a later ticket; until then a complete story publishes at once.
-    story.status = StoryStatus.PUBLISHED.value
-    story.published_at = datetime.now(UTC)
+    # Checked in the background: published if no label is raised, otherwise held for staff.
+    await moderation.submit(session, story)
     await session.commit()
     await session.refresh(story)
     return await to_out(session, story)
@@ -477,6 +535,22 @@ async def delete_photo(
     return Response(status_code=204)
 
 
+@router.delete("/{story_id}", status_code=204)
+async def delete_story(
+    story_id: str,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+    storage: LocalStorage = Depends(get_storage),
+) -> Response:
+    """The author removes the story and everything stored for it, in any status."""
+    story = await _own_story(session, story_id, user)
+    folder = f"stories/{story.id}"
+    await session.delete(story)  # rows that belong to it go with it (ON DELETE CASCADE)
+    await session.commit()
+    storage.delete_tree(folder)
+    return Response(status_code=204)
+
+
 @router.get("/{story_id}/pipeline", response_model=PipelineOut)
 async def pipeline_status(
     story_id: str,
@@ -501,7 +575,13 @@ async def retry_step(
     story = await _own_story(session, story_id, user)
     if step not in pipeline.STEPS:
         raise HTTPException(404, "No such step.")
-    _require_editable(story)
+    # The moderation check is retried while the story waits for it; text steps only while
+    # the story can still be edited.
+    if step == moderation.STEP:
+        if story.status != StoryStatus.MODERATING:
+            raise HTTPException(409, "This story is not waiting for its check.")
+    else:
+        _require_editable(story)
     if not await pipeline.retry(session, story, step):
         raise HTTPException(409, "Only a failed step can be retried.")
     return await pipeline_status(story_id, user, session)
@@ -554,3 +634,41 @@ async def serve_media(
     # being served at once. Private files never enter any cache.
     cache = "no-cache" if story.status == StoryStatus.PUBLISHED else "private, no-store"
     return FileResponse(path, media_type=asset.content_type, headers={"Cache-Control": cache})
+
+
+me_router = APIRouter(prefix="/me", tags=["stories"])
+
+
+@me_router.get("/stories", response_model=list[MyStory])
+async def my_stories(
+    user: User = Depends(current_user), session: AsyncSession = Depends(get_session)
+) -> list[MyStory]:
+    """Every story of the signed-in member, in every status, most recently changed first."""
+    stories = list(
+        (
+            await session.execute(
+                select(Story).where(Story.author_id == user.id).order_by(Story.updated_at.desc())
+            )
+        ).scalars()
+    )
+    covers = await photos.covers_for(session, stories)
+    out = []
+    for story in stories:
+        held_for: list[str] = []
+        if story.status == StoryStatus.HELD:
+            result = await moderation.latest(session, story.id)
+            held_for = [k for k, v in (result.labels if result else {}).items() if v["raised"]]
+        out.append(
+            MyStory(
+                id=story.id,
+                title=story.title,
+                status=story.status,
+                place_name=story.place_name,
+                cover=covers[story.id],
+                updated_at=story.updated_at,
+                published_at=story.published_at,
+                held_for=held_for,
+                review_note=story.review_note if story.status == StoryStatus.NEEDS_EDIT else None,
+            )
+        )
+    return out

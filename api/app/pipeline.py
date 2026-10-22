@@ -38,7 +38,7 @@ TARGETS: dict[str, tuple[str, ...]] = {
 }
 TARGET_LAYER = {"english": "translation_en", "msa": "translation_msa"}
 TARGET_STEP = {"english": "translate_en", "msa": "translate_msa"}
-STEPS = ("transcribe", "polish", "translate_en", "translate_msa")
+STEPS = ("transcribe", "polish", "translate_en", "translate_msa", "moderate")
 # Which step writes each layer.
 PRODUCED_BY = {
     VERBATIM: "transcribe",
@@ -337,7 +337,14 @@ async def status(session: AsyncSession, story: Story) -> tuple[list[StepStatus],
         job = await session.get(Job, row.job_id) if row and row.job_id else None
         state, message = _status_and_message(job if row else None)
         out.append(StepStatus(step, state, message))
-    return out, all(s.status == JobStatus.DONE for s in out)
+    complete = all(s.status == JobStatus.DONE for s in out)
+    # The moderation check appears once the story has been submitted; "complete" is about
+    # the text being ready, so it does not count here.
+    if (row := rows.get("moderate")) is not None:
+        job = await session.get(Job, row.job_id) if row.job_id else None
+        state, message = _status_and_message(job)
+        out.append(StepStatus("moderate", state, message))
+    return out, complete
 
 
 async def retry(session: AsyncSession, story: Story, step: str) -> bool:

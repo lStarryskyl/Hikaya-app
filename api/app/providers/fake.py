@@ -103,6 +103,15 @@ class FakeSpeechToText(_Priced):
         return Transcript(language=spoken, segments=segments)
 
 
+# Words that make the fake moderator raise a label, so tests and rehearsals are predictable.
+MODERATION_MARKERS = {
+    "hate": ("hateful", "hate speech"),
+    "violence": ("kill", "weapon", "threat"),
+    "sexual": ("explicit",),
+    "other_terrible": ("terrible-test",),
+}
+
+
 class FakeLanguageModel(_Priced):
     name = "fake"
     kind = "llm"
@@ -119,4 +128,17 @@ class FakeLanguageModel(_Priced):
         for t in texts:
             row = _lookup(t)
             out.append(f"{row[target]}." if row else f"[{target}] {_strip(t)}.")
+        return out
+
+    async def moderate(self, texts: list[str]) -> dict[str, dict]:
+        CALLS.append(("moderate", str(len(texts))))
+        _check("moderate")
+        joined = " ".join(texts).lower()
+        out = {}
+        for label, words in MODERATION_MARKERS.items():
+            hit = next((w for w in words if w in joined), None)
+            out[label] = {
+                "raised": hit is not None,
+                "reason": f'The text mentions "{hit}".' if hit else "",
+            }
         return out

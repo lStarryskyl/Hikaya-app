@@ -34,6 +34,17 @@ export interface PipelineStatus {
   complete: boolean
 }
 
+export interface StoryPhoto {
+  id: string
+  source: 'upload' | 'gallery'
+  photo: Photo
+}
+
+export interface ConsentStatement {
+  version: string
+  text: string
+}
+
 export interface StoryRecord {
   id: string
   title: string
@@ -52,6 +63,8 @@ export interface StoryRecord {
   place_slug: string | null
   cover: Photo | null
   curated: boolean
+  photos: StoryPhoto[]
+  consent: { version: string; at: string } | null
 }
 
 export type StoryFields = Partial<
@@ -124,7 +137,42 @@ export const getStory = (id: string) => api<StoryRecord>(`/stories/${id}`)
 export const createStory = (fields: StoryFields = {}) => api<StoryRecord>('/stories', { body: fields })
 export const updateStory = (id: string, fields: StoryFields) =>
   api<StoryRecord>(`/stories/${id}`, { method: 'PATCH', body: fields })
-export const submitStory = (id: string) => api<StoryRecord>(`/stories/${id}/submit`, { method: 'POST' })
+export const submitStory = (id: string, consentVersion: string) =>
+  api<StoryRecord>(`/stories/${id}/submit`, {
+    body: { consent: true, consent_version: consentVersion },
+  })
+
+export const getConsent = () => api<ConsentStatement>('/stories/consent')
+
+/** The limits the API checks uploads against, served so the page shows the same numbers. */
+export interface UploadLimits {
+  audio_max_mb: number
+  audio_max_minutes: number
+  photo_types: string[]
+  photo_max_mb: number
+  photos_per_story: number
+}
+
+let limitsRequest: Promise<UploadLimits> | null = null
+export function getLimits(): Promise<UploadLimits> {
+  limitsRequest ??= api<UploadLimits>('/stories/limits').catch((e) => {
+    limitsRequest = null
+    throw e
+  })
+  return limitsRequest
+}
+
+export function addPhoto(id: string, file: File) {
+  const form = new FormData()
+  form.append('file', file, file.name)
+  return api<StoryPhoto>(`/stories/${id}/photos`, { method: 'POST', form })
+}
+export const pickGalleryPhoto = (id: string, slug: string) =>
+  api<StoryPhoto>(`/stories/${id}/photos/gallery`, { body: { slug } })
+export const reorderPhotos = (id: string, ids: string[]) =>
+  api<StoryPhoto[]>(`/stories/${id}/photos/order`, { method: 'PUT', body: { ids } })
+export const deletePhoto = (id: string, photoId: string) =>
+  api<void>(`/stories/${id}/photos/${photoId}`, { method: 'DELETE' })
 
 export async function uploadAudio(id: string, file: Blob, filename: string): Promise<StoryRecord> {
   const form = new FormData()

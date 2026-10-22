@@ -9,13 +9,13 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import audio, pipeline, places
+from app import audio, consent, photos, pipeline, places
 from app.auth import current_user, current_user_optional
 from app.config import get_settings
 from app.db import get_session
@@ -24,17 +24,16 @@ from app.models import (
     AssetKind,
     Category,
     Language,
-    Role,
     Story,
     StoryStatus,
     User,
 )
 from app.storage import LocalStorage, TooLarge, get_storage
+from app.visibility import STAFF_ROLES, can_view
 
 router = APIRouter(prefix="/stories", tags=["stories"])
 media_router = APIRouter(tags=["media"])
 
-STAFF_ROLES = {Role.REVIEWER.value, Role.ADMIN.value}
 EDITABLE = {StoryStatus.DRAFT.value, StoryStatus.NEEDS_EDIT.value}
 
 Title = Annotated[str, StringConstraints(strip_whitespace=True, max_length=120)]
@@ -92,6 +91,29 @@ class LayerEdit(BaseModel):
     texts: list[SegmentText]
 
 
+class ConsentOut(BaseModel):
+    version: str
+    at: datetime
+
+
+class SubmitIn(BaseModel):
+    consent: bool = False
+    consent_version: str | None = None
+
+
+class ConsentStatement(BaseModel):
+    version: str
+    text: str
+
+
+class GalleryPick(BaseModel):
+    slug: str
+
+
+class PhotoOrder(BaseModel):
+    ids: list[uuid.UUID]
+
+
 class StoryOut(BaseModel):
     id: uuid.UUID
     title: str
@@ -110,16 +132,12 @@ class StoryOut(BaseModel):
     place_slug: str | None
     cover: places.PhotoOut | None
     curated: bool
+    photos: list[photos.StoryPhotoOut]
+    consent: ConsentOut | None
 
 
 def media_url(asset: Asset) -> str:
     return f"/media/{asset.id}"
-
-
-def can_view(story: Story, user: User | None) -> bool:
-    if story.status == StoryStatus.PUBLISHED:
-        return True
-    return user is not None and (user.id == story.author_id or user.role in STAFF_ROLES)
 
 
 def _parse_id(raw: str) -> uuid.UUID:
@@ -199,7 +217,13 @@ async def to_out(session: AsyncSession, story: Story) -> StoryOut:
             for la in await pipeline.layers(session, story.id)
         ],
         place_slug=story.place_slug,
-        cover=await places.cover_out(session, story),
+        cover=await photos.cover_out(session, story),
+        photos=await photos.list_for(session, story.id),
+        consent=(
+            ConsentOut(version=story.consent_version, at=story.consented_at)
+            if story.consent_version and story.consented_at
+            else None
+        ),
         curated=story.curated_at is not None,
     )
 
@@ -225,6 +249,33 @@ async def create_story(
     await session.commit()
     await session.refresh(story)
     return await to_out(session, story)
+
+
+class UploadLimits(BaseModel):
+    audio_max_mb: float
+    audio_max_minutes: float
+    photo_types: list[str]
+    photo_max_mb: float
+    photos_per_story: int
+
+
+@router.get("/limits", response_model=UploadLimits)
+async def upload_limits() -> UploadLimits:
+    """The limits uploads are checked against, so the page can show and pre-check them."""
+    settings = get_settings()
+    return UploadLimits(
+        audio_max_mb=settings.max_audio_upload_mb,
+        audio_max_minutes=settings.max_audio_minutes,
+        photo_types=sorted(photos.IMAGE_TYPES),
+        photo_max_mb=settings.max_photo_upload_mb,
+        photos_per_story=settings.max_photos_per_story,
+    )
+
+
+@router.get("/consent", response_model=ConsentStatement)
+async def consent_statement() -> ConsentStatement:
+    """The rights statement to show before publishing, with the version to send back."""
+    return ConsentStatement(version=consent.VERSION, text=consent.TEXT)
 
 
 @router.get("/{story_id}", response_model=StoryOut)
@@ -349,6 +400,7 @@ def missing_for_publishing(story: Story, has_audio: bool, has_transcript: bool) 
 @router.post("/{story_id}/submit", response_model=StoryOut)
 async def submit_story(
     story_id: str,
+    body: SubmitIn | None = None,
     user: User = Depends(current_user),
     session: AsyncSession = Depends(get_session),
 ) -> StoryOut:
@@ -362,12 +414,67 @@ async def submit_story(
     )
     if missing:
         raise HTTPException(422, "Add these before publishing: " + ", ".join(missing) + ".")
+    if body is None or not body.consent or body.consent_version != consent.VERSION:
+        raise HTTPException(422, "Agree to the current rights statement before publishing.")
+    story.consent_version, story.consented_at = consent.VERSION, datetime.now(UTC)
     # Moderation arrives in a later ticket; until then a complete story publishes at once.
     story.status = StoryStatus.PUBLISHED.value
     story.published_at = datetime.now(UTC)
     await session.commit()
     await session.refresh(story)
     return await to_out(session, story)
+
+
+@router.post("/{story_id}/photos", status_code=201, response_model=photos.StoryPhotoOut)
+async def add_photo(
+    story_id: str,
+    file: UploadFile,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+    storage: LocalStorage = Depends(get_storage),
+) -> photos.StoryPhotoOut:
+    story = await _own_story(session, story_id, user)
+    _require_editable(story)
+    return await photos.add_upload(session, story, file, storage)
+
+
+@router.post("/{story_id}/photos/gallery", status_code=201, response_model=photos.StoryPhotoOut)
+async def pick_gallery_photo(
+    story_id: str,
+    body: GalleryPick,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> photos.StoryPhotoOut:
+    story = await _own_story(session, story_id, user)
+    _require_editable(story)
+    return await photos.add_gallery_pick(session, story, body.slug)
+
+
+@router.put("/{story_id}/photos/order", response_model=list[photos.StoryPhotoOut])
+async def reorder_photos(
+    story_id: str,
+    body: PhotoOrder,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[photos.StoryPhotoOut]:
+    story = await _own_story(session, story_id, user)
+    _require_editable(story)
+    await photos.reorder(session, story, body.ids)
+    return await photos.list_for(session, story.id)
+
+
+@router.delete("/{story_id}/photos/{photo_id}", status_code=204)
+async def delete_photo(
+    story_id: str,
+    photo_id: uuid.UUID,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+    storage: LocalStorage = Depends(get_storage),
+) -> Response:
+    story = await _own_story(session, story_id, user)
+    _require_editable(story)
+    await photos.remove(session, story, photo_id, storage)
+    return Response(status_code=204)
 
 
 @router.get("/{story_id}/pipeline", response_model=PipelineOut)

@@ -13,8 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
 from app.models import Place, PlacePhoto, Story, StoryStatus, TextLayer, User
+from app.photos import covers_for
 from app.pipeline import POLISHED, TARGET_LAYER
-from app.places import PhotoOut, covers_for, photo_out
+from app.places import PhotoOut, photo_out
 from app.stories import AuthorOut
 
 router = APIRouter(tags=["discover"])
@@ -111,7 +112,7 @@ async def cards_for(session: AsyncSession, stories: list[Story]) -> list[StoryCa
             curated=s.curated_at is not None,
             author=AuthorOut(id=s.author_id, display_name=authors[s.author_id].display_name),
             excerpt=excerpt(s.id),
-            cover=photo_out(covers[s.id]) if covers[s.id] else None,
+            cover=covers[s.id],
         )
         for s in stories
     ]

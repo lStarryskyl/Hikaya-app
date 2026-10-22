@@ -59,27 +59,73 @@ def image_demuxer(path: Path) -> str | None:
     return next((demuxer for magic, demuxer in _IMAGE_MAGIC if head.startswith(magic)), None)
 
 
-async def convert(source: Path, slug: str, storage: LocalStorage) -> list[int]:
-    """Write a WebP for every width that does not exist yet. Returns the widths available."""
+class NotAnImage(Exception):
+    pass
+
+
+FFMPEG_TIMEOUT_SECONDS = 120
+
+
+async def _run(*args: str) -> tuple[int, bytes, bytes]:
+    process = await asyncio.create_subprocess_exec(
+        *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+    )
+    try:
+        out, err = await asyncio.wait_for(process.communicate(), FFMPEG_TIMEOUT_SECONDS)
+    except TimeoutError:
+        process.kill()
+        await process.wait()
+        return -1, b"", b"timed out"
+    return process.returncode, out, err
+
+
+async def image_size(source: Path) -> tuple[int, int]:
+    """(width, height) from the image header, without decoding the picture."""
     demuxer = image_demuxer(source)
     if demuxer is None:
-        raise RuntimeError(f"{source.name} is not a PNG, JPEG or WebP image")
+        raise NotAnImage(f"{source.name} is not a PNG, JPEG or WebP image")
+    code, out, _ = await _run(
+        "ffprobe", "-v", "error", "-protocol_whitelist", "file", "-f", demuxer,
+        "-select_streams", "v:0", "-show_entries", "stream=width,height",
+        "-of", "csv=p=0", str(source),
+    )  # fmt: skip
+    try:
+        width, height = (int(n) for n in out.decode().strip().split(",")[:2])
+    except ValueError:
+        raise NotAnImage(f"{source.name} has no readable size") from None
+    if code != 0 or width <= 0 or height <= 0:
+        raise NotAnImage(f"{source.name} has no readable size")
+    return width, height
+
+
+async def convert(source: Path, slug: str, storage: LocalStorage) -> list[int]:
+    """Place photo: write a WebP for every width not converted yet. Returns the widths."""
+    return await convert_image(source, lambda width: photo_key(slug, width), storage)
+
+
+async def convert_image(source: Path, key_for, storage: LocalStorage) -> list[int]:
+    """Write `source` as WebP at every width (skipping files that exist) under key_for(width).
+
+    The demuxer comes from the file's content, so FFmpeg never guesses a format, and only
+    the file protocol is allowed. Raises NotAnImage for anything but PNG, JPEG or WebP.
+    """
+    demuxer = image_demuxer(source)
+    if demuxer is None:
+        raise NotAnImage(f"{source.name} is not a PNG, JPEG or WebP image")
     for width in WIDTHS:
-        target = storage.path(photo_key(slug, width))
+        target = storage.path(key_for(width))
         if target.is_file():
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
-        process = await asyncio.create_subprocess_exec(
+        code, _, err = await _run(
             "ffmpeg", "-nostdin", "-v", "error", "-y",
             "-protocol_whitelist", "file", "-f", demuxer, "-i", str(source),
             "-vf", f"scale='min({width},iw)':-2", "-c:v", "libwebp", "-quality", "78",
             str(target),
-            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
         )  # fmt: skip
-        _, err = await process.communicate()
-        if process.returncode != 0:
+        if code != 0:
             target.unlink(missing_ok=True)
-            raise RuntimeError(f"could not convert {source.name}: {err.decode()[-300:]}")
+            raise NotAnImage(f"could not convert {source.name}: {err.decode()[-300:]}")
     return list(WIDTHS)
 
 
@@ -91,8 +137,8 @@ async def slug_for_name(session: AsyncSession, name: str) -> str | None:
     ).scalar_one_or_none()
 
 
-async def covers_for(session: AsyncSession, stories: list[Story]) -> dict:
-    """story id -> cover photo (the story's own, else its place's, else None), in two queries."""
+async def place_covers_for(session: AsyncSession, stories: list[Story]) -> dict:
+    """story id -> place photo cover (the story's chosen one, else its place's), two queries."""
     place_slugs = {s.place_slug for s in stories if s.cover_photo_slug is None and s.place_slug}
     place_covers = dict(
         (
@@ -110,11 +156,6 @@ async def covers_for(session: AsyncSession, stories: list[Story]) -> dict:
         ).scalars()
     } if slugs else {}  # fmt: skip
     return {story_id: photos.get(slug) for story_id, slug in wanted.items()}
-
-
-async def cover_out(session: AsyncSession, story: Story) -> PhotoOut | None:
-    cover = (await covers_for(session, [story]))[story.id]
-    return photo_out(cover) if cover else None
 
 
 @media_router.get("/media/places/{slug}/{width}.webp", include_in_schema=False)

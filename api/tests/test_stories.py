@@ -7,6 +7,7 @@ from app.config import get_settings
 from app.models import Role
 from app.seed_staff import StaffSeed, seed_staff
 from app.worker import run_one
+from tests.conftest import CONSENT
 
 PASSWORD = "correct horse battery"
 
@@ -77,7 +78,7 @@ async def published_story(client, tone, sessionmaker):
     assert (await upload(client, story["id"], tone)).status_code == 200
     while await run_one(sessionmaker):  # the transcript must exist before publishing
         pass
-    r = await client.post(f"/api/v1/stories/{story['id']}/submit")
+    r = await client.post(f"/api/v1/stories/{story['id']}/submit", json=CONSENT)
     assert r.status_code == 200, r.text
     return r.json()
 

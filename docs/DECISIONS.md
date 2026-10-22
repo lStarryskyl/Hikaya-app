@@ -99,7 +99,6 @@ Email and password. Sign-up creates a `member` with no email verification. Roles
 These exist on purpose while the build is in progress. Each closes with the ticket named.
 
 - Submitting a complete story publishes it at once, with no moderation (until #10).
-- The place is picked from a short list of towns with fixed coordinates (until the map-click pin in #7).
 - Transcription, polishing, translation and narration use fake providers by default; the real ones arrive with #12, #13 and #14, and the defaults then return to ElevenLabs and Azure as above.
 
 ## Demo data
@@ -110,6 +109,13 @@ These exist on purpose while the build is in progress. Each closes with the tick
 - The Arabic lines of the seed stories are placeholders for a native speaker to review. The place photos are not cleared for licensing, and one carries a stock watermark (see `api/seed/places/README.md`).
 - Map pins: a story in the museum is "featured", one published in the last 14 days is "recent", any other is "ordinary".
 - Likes, saves, comments, reflections, follows, notifications, the visit planner and profile editing stay mock. They live in the browser only, in `web/src/demo/mockEngagement.ts`, and nothing is stored.
+
+## Creating a story
+
+- Recording uses the browser's own recorder (WebM/Opus, Ogg/Opus or MP4/AAC, whichever the browser supports) and the page names the real format. Blocked, missing, busy or unsupported microphones each get a plain message, and uploading a file always remains possible.
+- Photos are optional: uploads (PNG, JPEG or WebP, up to 15 MB and 40 megapixels each, read by their content) are stored as WebP at three widths; members can also pick photos from a place gallery. Up to 12 photos, in an order the member sets; the first is the cover. Removing a gallery pick never deletes the shared place photo. The page reads the limits from the API, so they are set in one place.
+- The pin is set by clicking the map; typing a known place drops a starting pin there. The place name is free text.
+- Publishing needs agreement to the rights statement served by the API. The statement has a version; the story stores the version agreed to and when. Changing the wording means a new version.
 
 ## Media
 

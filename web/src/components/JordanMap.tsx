@@ -49,6 +49,8 @@ interface JordanMapProps {
   zoom?: number
   flyToFocused?: boolean
   showNavControl?: boolean
+  /** Called with the clicked position; makes the map a place-picker. */
+  onMapClick?: (lng: number, lat: number) => void
 }
 
 const JordanMap = forwardRef<JordanMapHandle, JordanMapProps>(function JordanMap(
@@ -61,6 +63,7 @@ const JordanMap = forwardRef<JordanMapHandle, JordanMapProps>(function JordanMap
     zoom = 6.5,
     flyToFocused = true,
     showNavControl = false,
+    onMapClick,
   },
   ref,
 ) {
@@ -69,6 +72,8 @@ const JordanMap = forwardRef<JordanMapHandle, JordanMapProps>(function JordanMap
   const markersRef = useRef<Marker[]>([])
   const onSelectRef = useRef(onSelectStory)
   onSelectRef.current = onSelectStory
+  const onMapClickRef = useRef(onMapClick)
+  onMapClickRef.current = onMapClick
 
   useImperativeHandle(ref, () => ({
     zoomIn: () => mapRef.current?.zoomIn(),
@@ -94,6 +99,8 @@ const JordanMap = forwardRef<JordanMapHandle, JordanMapProps>(function JordanMap
     }
 
     mapRef.current = map
+    map.on('click', (e) => onMapClickRef.current?.(e.lngLat.lng, e.lngLat.lat))
+    if (onMapClickRef.current) map.getCanvas().style.cursor = 'crosshair'
 
     const ro = new ResizeObserver(() => map.resize())
     ro.observe(containerRef.current)

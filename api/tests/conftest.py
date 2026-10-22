@@ -17,6 +17,7 @@ import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 
+from app import consent  # noqa: E402
 from app.db import dispose_engine, get_sessionmaker  # noqa: E402
 from app.main import app  # noqa: E402
 
@@ -38,7 +39,7 @@ async def sessionmaker():
         await session.execute(
             text(
                 "TRUNCATE jobs, pipeline_steps, text_layers, assets, stories, auth_sessions, users,"
-                " place_photos, places, spend_entries, provider_cache"
+                " place_photos, places, spend_entries, provider_cache, story_photos"
                 " CASCADE"
             )
         )
@@ -60,3 +61,7 @@ async def client(sessionmaker):
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
     app.dependency_overrides.clear()
+
+
+# The body a submit needs: agreement to the current rights statement.
+CONSENT = {"consent": True, "consent_version": consent.VERSION}

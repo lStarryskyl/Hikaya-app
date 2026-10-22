@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     # Uploads
     max_audio_upload_mb: float = 100
     max_audio_minutes: float = 60
+    max_photo_upload_mb: float = 15
+    max_photos_per_story: int = 12
+    # Refused before decoding, so a small file cannot expand into a huge image in memory.
+    max_photo_megapixels: float = 40
 
     # Worker behaviour
     worker_poll_seconds: float = 1.0

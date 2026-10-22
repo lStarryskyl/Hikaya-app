@@ -9,6 +9,7 @@ from sqlalchemy import text, update
 from app.models import Job
 from app.providers import fake
 from app.worker import run_one
+from tests.conftest import CONSENT
 
 PASSWORD = "correct horse battery"
 
@@ -402,7 +403,7 @@ async def test_publishing_waits_for_the_transcript(client, sessionmaker, tones):
     assert r.status_code == 422
     assert "transcript" in r.json()["detail"]
     await drain(sessionmaker)
-    r = await client.post(f"/api/v1/stories/{story_id}/submit")
+    r = await client.post(f"/api/v1/stories/{story_id}/submit", json=CONSENT)
     assert r.status_code == 200
 
     client.cookies.clear()
@@ -508,6 +509,8 @@ async def test_steps_of_a_published_story_cannot_be_retried(client, sessionmaker
         json={"title": "T", "category": "folklore", "place_name": "Madaba",
               "latitude": 31.7, "longitude": 35.8},
     )  # fmt: skip
-    assert (await client.post(f"/api/v1/stories/{story_id}/submit")).status_code == 200
+    assert (
+        await client.post(f"/api/v1/stories/{story_id}/submit", json=CONSENT)
+    ).status_code == 200
     r = await client.post(f"/api/v1/stories/{story_id}/pipeline/translate_en/retry")
     assert r.status_code == 409

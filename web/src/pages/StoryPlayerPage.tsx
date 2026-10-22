@@ -31,6 +31,7 @@ interface PlayerStory {
   audioUrl: string | null
   languageLabel: string | null
   layers: TextLayer[]
+  photos: PhotoData[]
 }
 
 function fromRecord(s: StoryRecord): PlayerStory {
@@ -48,6 +49,7 @@ function fromRecord(s: StoryRecord): PlayerStory {
     audioUrl: s.audio?.url ?? null,
     languageLabel: s.original_language ? LANGUAGE_LABELS[s.original_language] : null,
     layers: s.layers,
+    photos: s.photos.map((p) => p.photo),
   }
 }
 
@@ -140,7 +142,10 @@ function Player({ story }: { story: PlayerStory }) {
   const canPlay = !!story.audioUrl && !audioError
   const progress = duration ? Math.min(100, (elapsed / duration) * 100) : 0
   const places = useApi(getPlaces, [])
-  const gallery = places.data?.find((p) => p.slug === story.placeSlug)?.photos ?? []
+  // The story's own photos first; otherwise the gallery of its place.
+  const gallery = story.photos.length
+    ? story.photos
+    : (places.data?.find((p) => p.slug === story.placeSlug)?.photos ?? [])
   const feed = useApi(() => getFeed({ limit: 4 }), [])
   const upNext = (feed.data?.items ?? []).filter((s) => s.id !== story.id).slice(0, 3)
   const mock = engagementFor(story.id)
@@ -264,7 +269,7 @@ function Player({ story }: { story: PlayerStory }) {
           {gallery.length > 0 && (
             <div className="mb-6">
               <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
-                {story.place} gallery
+                {story.photos.length ? 'Photos' : `${story.place} gallery`}
               </div>
               <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-thin">
                 {gallery.map((photo) => (

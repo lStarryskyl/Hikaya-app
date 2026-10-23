@@ -56,6 +56,14 @@ class LanguageModel(Protocol):
         """Translation to `english` or `msa`, one output line per input line."""
         ...
 
+    async def moderate(self, texts: list[str]) -> dict[str, dict]:
+        """For each label in MODERATION_LABELS: {"raised": bool, "reason": str}."""
+        ...
+
+
+# Any raised label holds a story for staff review.
+MODERATION_LABELS = ("hate", "violence", "sexual", "other_terrible")
+
 
 class ProviderUnavailable(UserFacingError):
     pass

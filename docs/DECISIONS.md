@@ -98,7 +98,6 @@ Email and password. Sign-up creates a `member` with no email verification. Roles
 
 These exist on purpose while the build is in progress. Each closes with the ticket named.
 
-- Submitting a complete story publishes it at once, with no moderation (until #10).
 - Transcription, polishing, translation and narration use fake providers by default; the real ones arrive with #12, #13 and #14, and the defaults then return to ElevenLabs and Azure as above.
 
 ## Demo data
@@ -109,6 +108,14 @@ These exist on purpose while the build is in progress. Each closes with the tick
 - The Arabic lines of the seed stories are placeholders for a native speaker to review. The place photos are not cleared for licensing, and one carries a stock watermark (see `api/seed/places/README.md`).
 - Map pins: a story in the museum is "featured", one published in the last 14 days is "recent", any other is "ordinary".
 - Likes, saves, comments, reflections, follows, notifications, the visit planner and profile editing stay mock. They live in the browser only, in `web/src/demo/mockEngagement.ts`, and nothing is stored.
+
+## Moderation
+
+- Submitting moves a story to `moderating` and queues the check as a pipeline step, so a failure shows in its progress and can be retried. The language model labels the polished text and the English translation for `hate`, `violence`, `sexual` and `other_terrible`, each with a short reason.
+- No raised label publishes the story at once; any raised label puts it in `held`. Every check is stored with its labels and the exact text it judged. Submitting waits until the latest English translation has finished, so an older translation is never judged, and every submission is checked, even when the text has not changed. A staff decision made while a check runs is never overwritten.
+- Staff send a story back with a note (`needs_edit`, #11); the author edits and resubmits, which runs the check again. Held and needs-edit stories are visible only to the author and staff, and moderation details are never shown to anyone else.
+- "My stories" lists every story of the member with its status, why it was held, and the reviewer's note. The author can delete a story in any status; its rows, queued jobs and files are removed.
+- The fake language model raises labels on marker words (for example "kill" for violence, "hateful" for hate), so rehearsals and tests are predictable.
 
 ## Creating a story
 
@@ -127,7 +134,7 @@ These exist on purpose while the build is in progress. Each closes with the tick
 
 - The member chooses the spoken language before uploading. Transcription starts as soon as the recording is uploaded; polishing follows, then the translations, each as its own job.
 - Each step records a hash of its input. A new recording or a new language starts over from transcription and clears the old text. Editing the original words re-runs polishing and the translations; editing the polished text re-runs only the translations; editing a translation re-runs nothing. Re-running a later version replaces edits made to it, and the editor says so. A version cannot be edited while it is being remade. A result made from outdated input is dropped, and an input that returns to an earlier value runs again.
-- Publishing needs the original words and the polished text. Translations may still be running.
+- Publishing needs the original words, the polished text and, for an Arabic story, the English translation (moderation reads it). The MSA translation may still be running.
 - Failed steps show a plain message; unexpected errors never show their internal detail. A failed step can be retried from the Transcript step.
 
 ## Defaults I assumed (confirm or change)

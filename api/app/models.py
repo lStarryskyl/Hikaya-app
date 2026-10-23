@@ -168,6 +168,12 @@ class Story(Base):
     # The rights statement version the author agreed to when submitting, and when.
     consent_version: Mapped[str | None] = mapped_column(Text)
     consented_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Set by staff when they send a story back (needs_edit) or approve it.
+    review_note: Mapped[str | None] = mapped_column(Text)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
     status: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=StoryStatus.DRAFT.value
     )
@@ -380,3 +386,27 @@ class StoryPhoto(Base):
             "(place_photo_slug IS NULL) <> (widths IS NULL)", name="ck_story_photos_one_source"
         ),
     )
+
+
+class ModerationResult(Base):
+    """One moderation pass: each label's verdict and the hash of the text it judged."""
+
+    __tablename__ = "moderation_results"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    story_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("stories.id", ondelete="CASCADE"), nullable=False
+    )
+    # {"hate": {"raised": false, "reason": ""}, ...}
+    labels: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    held: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    # The exact texts that were judged, so staff can see what the verdict was about.
+    texts: Mapped[list] = mapped_column(JSONB, nullable=False)
+    text_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (Index("ix_moderation_results_story_created", "story_id", "created_at"),)

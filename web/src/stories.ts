@@ -20,7 +20,7 @@ export interface TextLayer {
   segments: Segment[]
 }
 
-export type StepName = 'transcribe' | 'polish' | 'translate_en' | 'translate_msa'
+export type StepName = 'transcribe' | 'polish' | 'translate_en' | 'translate_msa' | 'moderate'
 
 export interface PipelineStep {
   step: StepName
@@ -65,7 +65,47 @@ export interface StoryRecord {
   curated: boolean
   photos: StoryPhoto[]
   consent: { version: string; at: string } | null
+  /** Only for the author and staff. */
+  moderation: {
+    held: boolean
+    labels: { label: ModerationLabel; raised: boolean; reason: string }[]
+    judged_at: string
+  } | null
+  review: { note: string | null; at: string | null } | null
 }
+
+export type ModerationLabel = 'hate' | 'violence' | 'sexual' | 'other_terrible'
+
+export const MODERATION_LABELS: Record<ModerationLabel, string> = {
+  hate: 'Hateful content',
+  violence: 'Violence',
+  sexual: 'Sexual content',
+  other_terrible: 'Other harmful content',
+}
+
+export const STATUS_LABELS: Record<StoryStatus, string> = {
+  draft: 'Draft',
+  moderating: 'Being checked',
+  published: 'Published',
+  held: 'Under review',
+  needs_edit: 'Needs your edits',
+}
+
+/** One row of "My stories". */
+export interface MyStory {
+  id: string
+  title: string
+  status: StoryStatus
+  place_name: string
+  cover: Photo | null
+  updated_at: string
+  published_at: string | null
+  held_for: ModerationLabel[]
+  review_note: string | null
+}
+
+export const getMyStories = () => api<MyStory[]>('/me/stories')
+export const deleteStory = (id: string) => api<void>(`/stories/${id}`, { method: 'DELETE' })
 
 export type StoryFields = Partial<
   Pick<StoryRecord, 'title' | 'category' | 'place_name' | 'latitude' | 'longitude' | 'original_language'>
@@ -97,6 +137,7 @@ export const STEP_LABELS: Record<StepName, string> = {
   polish: 'Polishing the text',
   translate_en: 'Translating to English',
   translate_msa: 'Translating to Modern Standard Arabic',
+  moderate: 'Checking the story before publishing',
 }
 
 /** Same limit as the API's per-line maximum. */

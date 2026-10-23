@@ -1,7 +1,10 @@
-"""Narration and the slideshow: made in the worker once a story is published."""
+"""Narration and the slideshow: queued on submit, made in the worker, shown once ready.
+
+The slideshow carries the narration, so it follows it."""
 
 import json
 import subprocess
+import uuid
 from pathlib import Path
 
 import pytest
@@ -238,7 +241,9 @@ async def test_the_slideshow_is_a_playable_mp4(client, sessionmaker, tone, pictu
     assert (streams["video"]["width"], streams["video"]["height"]) == (1280, 720)
     assert streams["video"]["pix_fmt"] == "yuv420p"
     assert streams["audio"]["codec_name"] == "aac"
-    assert abs(float(info["format"]["duration"]) - story["duration_ms"] / 1000) < 0.5
+    # The video carries the narration, so it lasts as long as the narration.
+    narrated = story["narration"]["segments"][-1]["end_ms"] / 1000
+    assert abs(float(info["format"]["duration"]) - narrated) < 0.5
     # Every frame decodes.
     decoded = subprocess.run(
         ["ffmpeg", "-v", "error", "-i", str(video), "-f", "null", "-"], capture_output=True
@@ -281,7 +286,7 @@ async def resubmit_after(client, sessionmaker, session, story_id, change):
     return await publish(client, sessionmaker, story_id)
 
 
-async def test_editing_the_narrated_text_renarrates_but_keeps_the_slideshow(
+async def test_editing_the_narrated_text_renarrates_and_remakes_the_slideshow(
     client, sessionmaker, session, tone, pictures
 ):
     await sign_up(client)
@@ -296,7 +301,7 @@ async def test_editing_the_narrated_text_renarrates_but_keeps_the_slideshow(
     )
     assert after["narration"]["url"] != before["narration"]["url"]
     assert after["narration"]["segments"][0]["text"] == "سطر جديد."
-    assert after["slideshow"]["url"] == before["slideshow"]["url"]
+    assert after["slideshow"]["url"] != before["slideshow"]["url"]
 
 
 async def edit_all(client, story_id, texts):
@@ -370,3 +375,54 @@ async def test_a_cached_speech_file_that_went_missing_is_made_again(
     story = await publish(client, sessionmaker, other)
     assert len(speak_calls()) == 1
     assert (await client.get(story["narration"]["url"])).status_code == 200
+
+
+async def test_narration_starts_on_submit_alongside_the_check(client, sessionmaker, tone, pictures):
+    await sign_up(client)
+    story_id = await story_with_photo(client, sessionmaker, tone, pictures)
+    await submit(client, story_id)
+    steps = (await client.get(f"/api/v1/stories/{story_id}/pipeline")).json()["steps"]
+    queued = {s["step"]: s["status"] for s in steps}
+    assert queued["moderate"] == "queued"
+    assert queued["narrate"] == "queued"
+    # The slideshow carries the narration, so it waits for it.
+    assert "slideshow" not in queued
+
+
+async def test_a_held_story_is_narrated_too(client, sessionmaker, session, tone, pictures):
+    await sign_up(client)
+    story_id = await story_with_photo(client, sessionmaker, tone, pictures)
+    await edit(client, story_id, "translation_en", "A line about a weapon.")
+    await submit(client, story_id)
+    await drain(sessionmaker)
+    story = (await client.get(f"/api/v1/stories/{story_id}")).json()
+    assert story["status"] == "held"
+    assert story["narration"] is not None and story["slideshow"] is not None
+
+
+async def test_the_slideshow_carries_the_narration(client, sessionmaker, tone, pictures, tmp_path):
+    fake.TTS_ALIGNMENT[0] = False  # line lengths differ from the recording's
+    await sign_up(client)
+    story_id = await story_with_photo(client, sessionmaker, tone, pictures)
+    story = await publish(client, sessionmaker, story_id)
+    video = await media_file(client, story["slideshow"]["url"], tmp_path, "s.mp4")
+    narration = await media_file(client, story["narration"]["url"], tmp_path, "n.mp3")
+    video_s = float(probe(video)["format"]["duration"])
+    assert abs(video_s - float(probe(narration)["format"]["duration"])) < 0.5
+    assert abs(video_s - story["duration_ms"] / 1000) > 0.5
+
+
+async def test_a_missing_photo_fails_the_slideshow_instead_of_dropping_it(
+    client, sessionmaker, tone, pictures
+):
+    from app.storage import get_storage
+
+    await sign_up(client)
+    story_id = await story_with_photo(client, sessionmaker, tone, pictures)
+    await add_photo(client, story_id, pictures[1])
+    photo = (await client.get(f"/api/v1/stories/{story_id}")).json()["photos"][1]
+    get_storage().delete(f"stories/{story_id}/photos/{uuid.UUID(photo['id']).hex}/1600.webp")
+    await submit(client, story_id)
+    await drain(sessionmaker)
+    steps = (await client.get(f"/api/v1/stories/{story_id}/pipeline")).json()["steps"]
+    assert {s["step"]: s["status"] for s in steps}["slideshow"] == "failed"

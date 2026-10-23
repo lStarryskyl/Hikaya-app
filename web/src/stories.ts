@@ -25,6 +25,9 @@ export type StepName =
 
 export type NarrationSource = 'polished' | 'msa'
 
+/** Made after submitting, from the finished text; the player shows their progress. */
+export const MEDIA_STEPS: StepName[] = ['narrate', 'slideshow']
+
 export interface Narration {
   url: string
   content_type: string

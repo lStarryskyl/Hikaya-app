@@ -143,6 +143,16 @@ class AssetKind(StrEnum):
     SLIDESHOW = "slideshow"  # pan-and-zoom video of the photos with the recording (MP4)
 
 
+class NarrationSource(StrEnum):
+    POLISHED = "polished"
+    MSA = "msa"
+
+
+class NarrationTiming(StrEnum):
+    ALIGNMENT = "alignment"  # from the voice provider's alignment data
+    PER_SEGMENT = "per_segment"  # each line spoken alone and measured
+
+
 class Story(Base):
     __tablename__ = "stories"
 
@@ -180,7 +190,9 @@ class Story(Base):
         Text, nullable=False, server_default=StoryStatus.DRAFT.value
     )
     # Which text the narration reads: the polished text, or the MSA translation.
-    narration_source: Mapped[str] = mapped_column(Text, nullable=False, server_default="polished")
+    narration_source: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=NarrationSource.POLISHED.value
+    )
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -423,8 +435,8 @@ class Narration(Base):
     """A story's current narration: which voice read which text, and when each line starts.
 
     segments: [{"start_ms": int, "end_ms": int, "text": str}, ...], one per line of the text
-    read, in the narration's own time. timing: "alignment" (from the provider) or
-    "per_segment" (each line spoken alone and measured).
+    read, in the narration's own time. input_hash is the narrate step's input it was made
+    from, so the slideshow knows whether it carries the current narration.
     """
 
     __tablename__ = "narrations"
@@ -441,6 +453,7 @@ class Narration(Base):
     source: Mapped[str] = mapped_column(Text, nullable=False)
     timing: Mapped[str] = mapped_column(Text, nullable=False)
     segments: Mapped[list] = mapped_column(JSONB, nullable=False)
+    input_hash: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

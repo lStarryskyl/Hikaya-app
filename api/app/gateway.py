@@ -10,6 +10,7 @@
    fits the caps; the reservation is committed after the call or released if it fails.
 """
 
+import asyncio
 import hashlib
 import uuid
 from collections.abc import Awaitable, Callable
@@ -103,17 +104,15 @@ async def _store(
         insert = pg_insert(ProviderCacheEntry).values(
             key=key, operation=operation, provider=provider, result=result, file_key=file_key
         )
+        # A file result is stored again when its file went missing and was made anew.
         await session.execute(
             insert.on_conflict_do_update(
                 index_elements=["key"], set_={"result": result, "file_key": file_key}
             )
+            if file_key
+            else insert.on_conflict_do_nothing(index_elements=["key"])
         )
         await session.commit()
-
-
-def file_key_for(operation: str, provider, parts: tuple[str, ...], extension: str) -> str:
-    """Where a file result for this input is cached in storage."""
-    return f"cache/{operation}/{cache_key(operation, provider.name, parts)}{extension}"
 
 
 async def call(
@@ -126,7 +125,7 @@ async def call(
     file_key: str | None = None,
 ) -> dict:
     """Run `run()` (which returns a JSON-able dict) at most once per input, within budget.
-    With `file_key`, `run()` also writes its file there (see `file_key_for`)."""
+    `file_key` is for `call_file`."""
     key = cache_key(operation, provider.name, parts)
     async with get_sessionmaker()() as session:
         hit = await session.get(ProviderCacheEntry, key)
@@ -155,3 +154,26 @@ async def call(
         costs.append(estimate)
     await _store(key, operation, provider.name, result, file_key)
     return result
+
+
+async def call_file(
+    operation: str,
+    provider,
+    parts: tuple[str, ...],
+    units: int,
+    run: Callable[[], Awaitable[tuple[dict, bytes]]],
+    extension: str,
+) -> tuple[dict, str]:
+    """`call` for a result that is a file (such as speech): `run()` returns the JSON-able part
+    and the file's bytes; the file is cached in storage next to the result. Returns the result
+    and the file's storage key."""
+    storage = get_storage()
+    file_key = f"cache/{operation}/{cache_key(operation, provider.name, parts)}{extension}"
+
+    async def run_and_save() -> dict:
+        result, data = await run()
+        await asyncio.to_thread(storage.write_bytes, file_key, data)
+        return result
+
+    result = await call(operation, provider, parts, units, run_and_save, file_key=file_key)
+    return result, file_key

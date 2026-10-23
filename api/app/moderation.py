@@ -53,6 +53,8 @@ async def judged_texts(session: AsyncSession, story: Story) -> list[str]:
 
 async def submit(session: AsyncSession, story: Story) -> None:
     """Move the story to `moderating` and queue the check, in the caller's transaction."""
+    if not await step_done(session, story.id, "polish"):
+        raise TextNotReady("Wait for the polished text to finish, then submit again.")
     if story.original_language != "english" and not await step_done(
         session, story.id, "translate_en"
     ):
@@ -69,6 +71,8 @@ async def submit(session: AsyncSession, story: Story) -> None:
     story.published_at = None
     # Every submission is checked, even when the text is the same as last time.
     await queue_step(session, story.id, STEP, STEP, input_hash, always=True)
+    # Narration starts alongside the check, so reviewers hear held stories too.
+    await media.queue(session, story)
 
 
 def _validated(verdicts: dict) -> dict[str, dict]:
@@ -128,8 +132,6 @@ async def moderate(payload: dict) -> dict:
         else:
             story.status = StoryStatus.PUBLISHED.value
             story.published_at = datetime.now(UTC)
-            # Narration and the slideshow follow; the story does not wait for them.
-            await media.queue(session, story)
         await session.commit()
         return {"held": held}
 

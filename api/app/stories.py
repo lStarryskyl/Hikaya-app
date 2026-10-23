@@ -8,7 +8,7 @@ Anything a caller may not see answers 404, so drafts do not leak their existence
 import asyncio
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated, Literal
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
@@ -26,6 +26,7 @@ from app.models import (
     Category,
     Job,
     Language,
+    NarrationSource,
     Story,
     StoryStatus,
     User,
@@ -49,7 +50,7 @@ class StoryFields(BaseModel):
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
     original_language: Language | None = None
-    narration_source: Literal["polished", "msa"] | None = None
+    narration_source: NarrationSource | None = None
 
 
 class AuthorOut(BaseModel):
@@ -273,11 +274,7 @@ async def _narration_out(session: AsyncSession, story_id: uuid.UUID) -> Narratio
 
 
 async def _slideshow_out(session: AsyncSession, story_id: uuid.UUID) -> MediaOut | None:
-    asset = (
-        await session.execute(
-            select(Asset).where(Asset.story_id == story_id, Asset.kind == AssetKind.SLIDESHOW)
-        )
-    ).scalar_one_or_none()
+    asset = await media.slideshow_of(session, story_id)
     return MediaOut(url=media_url(asset), content_type=asset.content_type) if asset else None
 
 
@@ -635,12 +632,12 @@ async def retry_step(
     if step not in pipeline.STEPS:
         raise HTTPException(404, "No such step.")
     # The moderation check is retried while the story waits for it; narration and the
-    # slideshow in any status (they follow publishing); text steps only while the story can
-    # still be edited.
+    # slideshow in any status (they run on after submitting); text steps only while the
+    # story can still be edited.
     if step == moderation.STEP:
         if story.status != StoryStatus.MODERATING:
             raise HTTPException(409, "This story is not waiting for its check.")
-    elif step not in (media.NARRATE, media.SLIDESHOW):
+    elif step not in pipeline.MEDIA_STEPS:
         _require_editable(story)
     if not await pipeline.retry(session, story, step):
         raise HTTPException(409, "Only a failed step can be retried.")

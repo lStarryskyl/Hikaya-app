@@ -6,6 +6,7 @@ import {
 import { Badge, Card, PillButton } from '../components/ui'
 import TranscriptView from '../components/TranscriptView'
 import StoryStatusBanner from '../components/StoryStatusBanner'
+import MediaProgress from '../components/MediaProgress'
 import { ApiError } from '../api'
 import { initials } from '../auth'
 import Photo from '../components/Photo'
@@ -116,7 +117,8 @@ export default function StoryPlayerPage() {
       </div>
     )
   }
-  return <Player story={load.story} onStoryChange={onStoryChange} />
+  // Keyed by story, so following a link to another story starts its player afresh.
+  return <Player key={load.story.id} story={load.story} onStoryChange={onStoryChange} />
 }
 
 function Player({
@@ -132,6 +134,9 @@ function Player({
   const [mode, setMode] = useState<'original' | 'narrated'>(story.audioUrl ? 'original' : 'narrated')
   // After switching, continue at the same line in the other track.
   const resumeAt = useRef<{ seconds: number; play: boolean } | null>(null)
+  // The slideshow carries the narration, so while it plays the lines follow its timings.
+  const [videoPlaying, setVideoPlaying] = useState(false)
+  const [videoTime, setVideoTime] = useState(0)
   const [tab, setTab] = useState<'transcript' | 'accessibility'>('transcript')
   const [playing, setPlaying] = useState(false)
   const [elapsed, setElapsed] = useState(0)
@@ -167,6 +172,9 @@ function Player({
     el?.pause()
     setAudioError(false)
     setElapsed(target)
+    // Until the new track's own length loads, use the length its timings give.
+    const lines = lineTimes(next)
+    setDuration(lines.length ? lines[lines.length - 1].end_ms / 1000 : story.durationSec)
     setMode(next)
   }
 
@@ -234,6 +242,7 @@ function Player({
       </div>
 
       <StoryStatusBanner story={story.record} onChange={onStoryChange} />
+      <MediaProgress story={story.record} onChange={onStoryChange} />
 
       <div className="grid lg:grid-cols-[minmax(0,1fr)_340px] gap-6">
         <div>
@@ -349,7 +358,13 @@ function Player({
                 controls
                 preload="metadata"
                 poster={story.cover?.urls['1600'] ?? story.cover?.urls['960']}
-                onPlay={() => audioRef.current?.pause()}
+                onPlay={() => {
+                  audioRef.current?.pause()
+                  setVideoPlaying(true)
+                }}
+                onPause={() => setVideoPlaying(false)}
+                onEnded={() => setVideoPlaying(false)}
+                onTimeUpdate={(e) => setVideoTime(e.currentTarget.currentTime)}
                 className="aspect-video w-full rounded-xl2 bg-black"
                 aria-label={`Slideshow of ${story.title}`}
               />
@@ -443,10 +458,14 @@ function Player({
             story.layers.length > 0 ? (
               <TranscriptView
                 layers={story.layers}
-                elapsedMs={elapsed * 1000}
-                following={playing}
-                timing={mode === 'narrated' ? story.narration?.segments : null}
+                elapsedMs={(videoPlaying ? videoTime : elapsed) * 1000}
+                following={playing || videoPlaying}
+                timing={mode === 'narrated' || videoPlaying ? story.narration?.segments : null}
                 onSeek={(ms) => {
+                  if (videoPlaying && videoRef.current) {
+                    videoRef.current.currentTime = ms / 1000
+                    return
+                  }
                   seekTo(ms / 1000)
                   if (canPlay && !playing) togglePlay()
                 }}

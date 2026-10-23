@@ -32,6 +32,7 @@ def upgrade() -> None:
         sa.Column("source", sa.Text(), nullable=False),
         sa.Column("timing", sa.Text(), nullable=False),
         sa.Column("segments", postgresql.JSONB(), nullable=False),
+        sa.Column("input_hash", sa.Text(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.ForeignKeyConstraint(["story_id"], ["stories.id"], ondelete="CASCADE", name="fk_narrations_story_id"),
         sa.ForeignKeyConstraint(["asset_id"], ["assets.id"], ondelete="CASCADE", name="fk_narrations_asset_id"),

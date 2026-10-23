@@ -61,22 +61,22 @@ export default function TranscriptView({
       <div ref={listRef} className="relative max-h-[420px] space-y-1.5 overflow-y-auto pe-1 scrollbar-thin">
         {layer.segments.map((seg, i) => {
           const active = i === activeIndex
-          const at = times[i].start_ms
+          const startMs = times[i].start_ms
           return (
             <button
               key={seg.start_ms}
               ref={active ? activeRef : undefined}
               type="button"
-              onClick={() => onSeek(at)}
+              onClick={() => onSeek(startMs)}
               aria-current={active ? 'true' : undefined}
-              aria-label={`Play from ${timestamp(at)}`}
+              aria-label={`Play from ${timestamp(startMs)}`}
               className={`block w-full rounded-lg p-3 text-start text-[12.5px] leading-relaxed transition ${
                 active
                   ? 'border-s-2 border-terracotta bg-terracotta-light text-ink2'
                   : 'text-muted2 hover:bg-cream'
               }`}
             >
-              <span className="me-2 font-mono text-[10px] text-terracotta">{timestamp(at)}</span>
+              <span className="me-2 font-mono text-[10px] text-terracotta">{timestamp(startMs)}</span>
               <span {...direction} className={`${textFont(layer.language)} block`}>
                 {seg.text}
               </span>

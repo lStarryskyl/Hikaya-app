@@ -20,7 +20,21 @@ export interface TextLayer {
   segments: Segment[]
 }
 
-export type StepName = 'transcribe' | 'polish' | 'translate_en' | 'translate_msa' | 'moderate'
+export type StepName =
+  | 'transcribe' | 'polish' | 'translate_en' | 'translate_msa' | 'moderate' | 'narrate' | 'slideshow'
+
+export type NarrationSource = 'polished' | 'msa'
+
+export interface Narration {
+  url: string
+  content_type: string
+  voice: string
+  language: LanguageValue
+  source: NarrationSource
+  timing: 'alignment' | 'per_segment'
+  /** One per line of the text read, in the narration's own time. */
+  segments: Segment[]
+}
 
 export interface PipelineStep {
   step: StepName
@@ -65,6 +79,9 @@ export interface StoryRecord {
   curated: boolean
   photos: StoryPhoto[]
   consent: { version: string; at: string } | null
+  narration_source: NarrationSource
+  narration: Narration | null
+  slideshow: { url: string; content_type: string } | null
   /** Only for the author and staff. */
   moderation: {
     held: boolean
@@ -108,7 +125,10 @@ export const getMyStories = () => api<MyStory[]>('/me/stories')
 export const deleteStory = (id: string) => api<void>(`/stories/${id}`, { method: 'DELETE' })
 
 export type StoryFields = Partial<
-  Pick<StoryRecord, 'title' | 'category' | 'place_name' | 'latitude' | 'longitude' | 'original_language'>
+  Pick<
+    StoryRecord,
+    'title' | 'category' | 'place_name' | 'latitude' | 'longitude' | 'original_language' | 'narration_source'
+  >
 >
 
 export const CATEGORY_LABELS: Record<CategoryValue, string> = {
@@ -138,6 +158,8 @@ export const STEP_LABELS: Record<StepName, string> = {
   translate_en: 'Translating to English',
   translate_msa: 'Translating to Modern Standard Arabic',
   moderate: 'Checking the story before publishing',
+  narrate: 'Recording the narration',
+  slideshow: 'Making the slideshow',
 }
 
 /** Same limit as the API's per-line maximum. */

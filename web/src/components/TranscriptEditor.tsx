@@ -126,7 +126,8 @@ export default function TranscriptEditor({
           <p className="text-sm text-muted2">Starting…</p>
         ) : (
           <ol className="space-y-3">
-            {pipeline.steps.map((s) => (
+            {/* Narration and the slideshow follow publishing; the player shows them. */}
+            {pipeline.steps.filter((s) => s.step !== 'narrate' && s.step !== 'slideshow').map((s) => (
               <li key={s.step} className="text-sm">
                 <div className="flex items-center gap-2">
                   {s.status === 'done' ? (

@@ -1,6 +1,7 @@
 """AI providers behind one interface per kind, chosen by setting.
 
-Callers ask for `speech_to_text()` or `language_model()` and never import a provider
+Callers ask for `speech_to_text()`, `language_model()` or `text_to_speech()` and never import a
+provider
 directly, so switching provider is a setting change, not a code change.
 """
 
@@ -61,6 +62,33 @@ class LanguageModel(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class Speech:
+    audio: bytes  # MP3
+    # (start_ms, end_ms) for each input line, from the provider's alignment data; None when
+    # the provider offers none.
+    lines: list[tuple[int, int]] | None
+
+
+class TextToSpeech(Protocol):
+    name: str
+    budget: str | None
+    # True when `speak` returns timings per line, so a whole text can be spoken in one call.
+    aligns: bool
+
+    def estimate_usd(self, operation: str, units: int) -> Decimal:
+        """Expected cost; units are characters of text."""
+        ...
+
+    def voice_for(self, language: str) -> str:
+        """The voice that reads text in this language (jordanian | msa | english)."""
+        ...
+
+    async def speak(self, texts: list[str], language: str, voice: str) -> Speech:
+        """The lines read one after another, as one MP3."""
+        ...
+
+
 # Any raised label holds a story for staff review.
 MODERATION_LABELS = ("hate", "violence", "sexual", "other_terrible")
 
@@ -93,3 +121,12 @@ def language_model() -> LanguageModel:
     if name == "fake":
         return fake.FakeLanguageModel()
     raise _not_connected("language model", name)
+
+
+def text_to_speech() -> TextToSpeech:
+    from app.providers import fake
+
+    name = get_settings().tts_provider
+    if name == "fake":
+        return fake.FakeTextToSpeech()
+    raise _not_connected("voice", name)

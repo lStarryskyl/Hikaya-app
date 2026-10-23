@@ -38,7 +38,18 @@ TARGETS: dict[str, tuple[str, ...]] = {
 }
 TARGET_LAYER = {"english": "translation_en", "msa": "translation_msa"}
 TARGET_STEP = {"english": "translate_en", "msa": "translate_msa"}
-STEPS = ("transcribe", "polish", "translate_en", "translate_msa", "moderate")
+# Text steps, then the ones that run on submit (moderate) and once published (narrate,
+# slideshow); those later ones show in the progress only once queued.
+STEPS = (
+    "transcribe",
+    "polish",
+    "translate_en",
+    "translate_msa",
+    "moderate",
+    "narrate",
+    "slideshow",
+)
+LATER_STEPS = ("moderate", "narrate", "slideshow")
 # Which step writes each layer.
 PRODUCED_BY = {
     VERBATIM: "transcribe",
@@ -346,10 +357,10 @@ async def status(session: AsyncSession, story: Story) -> tuple[list[StepStatus],
         for step in expected_steps(story.original_language)
     ]
     complete = all(s.status == JobStatus.DONE for s in out)
-    # The moderation check appears once the story has been submitted; "complete" is about
-    # the text being ready, so it does not count here.
-    if "moderate" in rows:
-        out.append(await _step_status(session, "moderate", rows["moderate"]))
+    # "complete" is about the text being ready, so the later steps do not count here.
+    for step in LATER_STEPS:
+        if step in rows:
+            out.append(await _step_status(session, step, rows[step]))
     return out, complete
 
 

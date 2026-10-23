@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import gateway
+from app import gateway, media
 from app.config import get_settings
 from app.db import get_sessionmaker
 from app.errors import UserFacingError
@@ -58,6 +58,11 @@ async def submit(session: AsyncSession, story: Story) -> None:
     ):
         # An older translation would be judged in place of the text the member now has.
         raise TextNotReady("Wait for the English translation to finish, then submit again.")
+    if media.source_step(story) == "translate_msa" and not await step_done(
+        session, story.id, "translate_msa"
+    ):
+        # The narration reads the MSA translation, so it must be the latest one.
+        raise TextNotReady("Wait for the MSA translation to finish, then submit again.")
     texts = await judged_texts(session, story)
     input_hash = step_hash(STEP, get_settings().llm_provider, json.dumps(texts, ensure_ascii=False))
     story.status = StoryStatus.MODERATING.value
@@ -123,6 +128,8 @@ async def moderate(payload: dict) -> dict:
         else:
             story.status = StoryStatus.PUBLISHED.value
             story.published_at = datetime.now(UTC)
+            # Narration and the slideshow follow; the story does not wait for them.
+            await media.queue(session, story)
         await session.commit()
         return {"held": held}
 

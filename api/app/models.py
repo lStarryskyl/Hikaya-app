@@ -139,6 +139,8 @@ class Language(StrEnum):
 class AssetKind(StrEnum):
     ORIGINAL_AUDIO = "original_audio"
     AUDIO = "audio"  # normalised copy used for playback and providers
+    NARRATION = "narration"  # the text read by a voice (MP3)
+    SLIDESHOW = "slideshow"  # pan-and-zoom video of the photos with the recording (MP4)
 
 
 class Story(Base):
@@ -177,6 +179,8 @@ class Story(Base):
     status: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=StoryStatus.DRAFT.value
     )
+    # Which text the narration reads: the polished text, or the MSA translation.
+    narration_source: Mapped[str] = mapped_column(Text, nullable=False, server_default="polished")
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -191,6 +195,9 @@ class Story(Base):
         CheckConstraint(
             "status IN ('draft', 'moderating', 'published', 'held', 'needs_edit')",
             name="ck_stories_status",
+        ),
+        CheckConstraint(
+            "narration_source IN ('polished', 'msa')", name="ck_stories_narration_source"
         ),
         CheckConstraint(
             "category IS NULL OR category IN "
@@ -410,3 +417,30 @@ class ModerationResult(Base):
     )
 
     __table_args__ = (Index("ix_moderation_results_story_created", "story_id", "created_at"),)
+
+
+class Narration(Base):
+    """A story's current narration: which voice read which text, and when each line starts.
+
+    segments: [{"start_ms": int, "end_ms": int, "text": str}, ...], one per line of the text
+    read, in the narration's own time. timing: "alignment" (from the provider) or
+    "per_segment" (each line spoken alone and measured).
+    """
+
+    __tablename__ = "narrations"
+
+    story_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("stories.id", ondelete="CASCADE"), primary_key=True
+    )
+    asset_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=False
+    )
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    voice: Mapped[str] = mapped_column(Text, nullable=False)
+    language: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    timing: Mapped[str] = mapped_column(Text, nullable=False)
+    segments: Mapped[list] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

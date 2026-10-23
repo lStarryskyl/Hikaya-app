@@ -130,11 +130,21 @@ These exist on purpose while the build is in progress. Each closes with the tick
 - Place photos are served as WebP at 480, 960 and 1600 pixels wide; pages pick a size with `srcset`.
 - FFmpeg reads each upload with the demuxer for its declared type and only the `file` protocol, so it never guesses a format from the content.
 
+## Narration and slideshow
+
+- Both are made once a story is published, not while it is a draft, so no voice or render time is spent on stories that moderation holds. The story is published without waiting for them; the player shows what exists, and a failed one can be retried in any status.
+- The narration reads the polished text by default, or the MSA translation if the member chooses it on the last step of Create Story. For an MSA story the polished text already is MSA.
+- Narration timings come from the voice provider's alignment data when it offers them (the whole text in one call). Otherwise each line is spoken on its own, measured and joined. Each narration records its provider, voice, language, source text and how its timings were made.
+- Every spoken piece is cached as a file by a hash of its input, so the same text is never paid for twice, and the demo pack carries the files. A narration copies its file, so deleting a story never removes a cached result.
+- The slideshow is a 1280×720 H.264 and AAC MP4 at 25 frames a second: each photo holds for an equal share of the recording with a slow zoom or pan and a short fade. It uses the story's photos in order, or its place photo when it has none, and is skipped when there is no picture at all.
+- Republishing re-runs only what changed: narration when the text it reads or the source choice changed, the slideshow when the photos or the recording changed.
+- The player switches between the storyteller's recording and the narration, continuing at the same line, and highlights lines with the timings of whichever is playing. The open-source Chromium used in CI cannot decode H.264, so the browser test checks the slideshow is on the page and served, and the API tests check the file itself decodes.
+
 ## Text pipeline
 
 - The member chooses the spoken language before uploading. Transcription starts as soon as the recording is uploaded; polishing follows, then the translations, each as its own job.
 - Each step records a hash of its input. A new recording or a new language starts over from transcription and clears the old text. Editing the original words re-runs polishing and the translations; editing the polished text re-runs only the translations; editing a translation re-runs nothing. Re-running a later version replaces edits made to it, and the editor says so. A version cannot be edited while it is being remade. A result made from outdated input is dropped, and an input that returns to an earlier value runs again.
-- Publishing needs the original words, the polished text and, for an Arabic story, the English translation (moderation reads it). The MSA translation may still be running.
+- Publishing needs the original words, the polished text and, for an Arabic story, the English translation (moderation reads it). The MSA translation may still be running, unless the narration reads it.
 - Failed steps show a plain message; unexpected errors never show their internal detail. A failed step can be retried from the Transcript step.
 
 ## Defaults I assumed (confirm or change)

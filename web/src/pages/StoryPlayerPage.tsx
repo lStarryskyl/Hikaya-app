@@ -12,7 +12,7 @@ import Photo from '../components/Photo'
 import { getFeed, getPlaces, type Photo as PhotoData } from '../discover'
 import { engagementFor, mockAvatarUrl, sampleReflections } from '../demo/mockEngagement'
 import {
-  CATEGORY_LABELS, LANGUAGE_LABELS, formatDuration, getStory, isStoryId, type StoryRecord,
+  CATEGORY_LABELS, LANGUAGE_LABELS, LAYER_LABELS, formatDuration, getStory, isStoryId, type StoryRecord,
   type TextLayer,
 } from '../stories'
 import { useApi } from '../useApi'
@@ -30,6 +30,8 @@ interface PlayerStory {
   cover: PhotoData | null
   curated: boolean
   audioUrl: string | null
+  narration: StoryRecord['narration']
+  slideshow: StoryRecord['slideshow']
   languageLabel: string | null
   layers: TextLayer[]
   photos: PhotoData[]
@@ -49,6 +51,8 @@ function fromRecord(s: StoryRecord): PlayerStory {
     cover: s.cover,
     curated: s.curated,
     audioUrl: s.audio?.url ?? null,
+    narration: s.narration,
+    slideshow: s.slideshow,
     languageLabel: s.original_language ? LANGUAGE_LABELS[s.original_language] : null,
     layers: s.layers,
     photos: s.photos.map((p) => p.photo),
@@ -123,6 +127,11 @@ function Player({
   onStoryChange: (record: StoryRecord) => void
 }) {
   const audioRef = useRef<HTMLAudioElement>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  // Listen to the storyteller's own recording, or to the narration of the text.
+  const [mode, setMode] = useState<'original' | 'narrated'>(story.audioUrl ? 'original' : 'narrated')
+  // After switching, continue at the same line in the other track.
+  const resumeAt = useRef<{ seconds: number; play: boolean } | null>(null)
   const [tab, setTab] = useState<'transcript' | 'accessibility'>('transcript')
   const [playing, setPlaying] = useState(false)
   const [elapsed, setElapsed] = useState(0)
@@ -145,6 +154,22 @@ function Player({
     }
   }
 
+  const lineTimes = (m: 'original' | 'narrated') =>
+    m === 'narrated' ? (story.narration?.segments ?? []) : (story.layers[0]?.segments ?? [])
+
+  function switchTo(next: 'original' | 'narrated') {
+    if (next === mode) return
+    const el = audioRef.current
+    const ms = elapsed * 1000
+    const line = lineTimes(mode).findIndex((s) => ms >= s.start_ms && ms < s.end_ms)
+    const target = line >= 0 ? (lineTimes(next)[line]?.start_ms ?? 0) / 1000 : 0
+    resumeAt.current = { seconds: target, play: !!el && !el.paused }
+    el?.pause()
+    setAudioError(false)
+    setElapsed(target)
+    setMode(next)
+  }
+
   function seekTo(seconds: number) {
     const el = audioRef.current
     if (!el || !duration) return
@@ -152,7 +177,8 @@ function Player({
     setElapsed(el.currentTime)
   }
 
-  const canPlay = !!story.audioUrl && !audioError
+  const src = mode === 'narrated' ? (story.narration?.url ?? null) : story.audioUrl
+  const canPlay = !!src && !audioError
   const progress = duration ? Math.min(100, (elapsed / duration) * 100) : 0
   const places = useApi(getPlaces, [])
   // The story's own photos first; otherwise the gallery of its place.
@@ -165,17 +191,27 @@ function Player({
 
   return (
     <div className="px-6 py-6 max-w-6xl mx-auto">
-      {story.audioUrl && (
+      {src && (
         <audio
           ref={audioRef}
-          src={story.audioUrl}
+          src={src}
           preload="metadata"
-          onPlay={() => setPlaying(true)}
+          onPlay={() => {
+            setPlaying(true)
+            videoRef.current?.pause()
+          }}
           onPause={() => setPlaying(false)}
           onEnded={() => setPlaying(false)}
           onTimeUpdate={(e) => setElapsed(e.currentTarget.currentTime)}
           onLoadedMetadata={(e) => {
-            if (Number.isFinite(e.currentTarget.duration)) setDuration(e.currentTarget.duration)
+            const el = e.currentTarget
+            if (Number.isFinite(el.duration)) setDuration(el.duration)
+            const resume = resumeAt.current
+            resumeAt.current = null
+            if (resume) {
+              el.currentTime = resume.seconds
+              if (resume.play) el.play().catch(() => setAudioError(true))
+            }
           }}
           onError={() => setAudioError(true)}
         />
@@ -218,6 +254,24 @@ function Player({
 
           {/* player bar */}
           <Card className="p-4 mb-6">
+            {story.narration && story.audioUrl && (
+              <div className="mb-3 flex justify-center">
+                <div role="radiogroup" aria-label="What to listen to" className="inline-flex rounded-full bg-cream p-1 text-xs">
+                  {(['original', 'narrated'] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      role="radio"
+                      aria-checked={mode === m}
+                      onClick={() => switchTo(m)}
+                      className={`rounded-full px-3 py-1 font-medium ${mode === m ? 'bg-terracotta text-cream' : 'text-muted2'}`}
+                    >
+                      {m === 'original' ? 'Storyteller' : 'Narration'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="flex items-center gap-2 mb-3">
               <span className="text-[11px] text-muted w-10">{fmt(elapsed)}</span>
               <div
@@ -272,6 +326,11 @@ function Player({
                 />
               </label>
             </div>
+            {mode === 'narrated' && story.narration && (
+              <p className="mt-3 text-center text-[11px] text-muted">
+                A voice reads the {LAYER_LABELS[story.narration.source === 'msa' ? 'translation_msa' : 'polished']} text.
+              </p>
+            )}
             {!canPlay && (
               <p className="mt-3 text-center text-[11px] text-muted">
                 {audioError
@@ -280,6 +339,22 @@ function Player({
               </p>
             )}
           </Card>
+
+          {story.slideshow && (
+            <div className="mb-6">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Slideshow</div>
+              <video
+                ref={videoRef}
+                src={story.slideshow.url}
+                controls
+                preload="metadata"
+                poster={story.cover?.urls['1600'] ?? story.cover?.urls['960']}
+                onPlay={() => audioRef.current?.pause()}
+                className="aspect-video w-full rounded-xl2 bg-black"
+                aria-label={`Slideshow of ${story.title}`}
+              />
+            </div>
+          )}
 
           {gallery.length > 0 && (
             <div className="mb-6">
@@ -370,6 +445,7 @@ function Player({
                 layers={story.layers}
                 elapsedMs={elapsed * 1000}
                 following={playing}
+                timing={mode === 'narrated' ? story.narration?.segments : null}
                 onSeek={(ms) => {
                   seekTo(ms / 1000)
                   if (canPlay && !playing) togglePlay()

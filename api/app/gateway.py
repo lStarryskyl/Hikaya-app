@@ -3,7 +3,8 @@
     result = await gateway.call("polish", provider, key_parts, units, run)
 
 1. A cached result for the same operation, provider and input is returned at once: no
-   cost, no provider call, whatever the live-AI switch says.
+   cost, no provider call, whatever the live-AI switch says. A result that is a file (speech)
+   is stored at `file_key`; a hit whose file has gone missing runs again.
 2. A free provider (the fakes) just runs.
 3. A paid provider needs LIVE_AI_ENABLED, then a reservation of its estimated cost that
    fits the caps; the reservation is committed after the call or released if it fails.
@@ -22,6 +23,7 @@ from app.config import get_settings
 from app.db import get_sessionmaker
 from app.errors import UserFacingError
 from app.models import ProviderCacheEntry, SpendEntry
+from app.storage import get_storage
 
 # Set by the worker around each job, so ledger rows and job costs know their job.
 CURRENT_JOB: ContextVar[uuid.UUID | None] = ContextVar("current_job", default=None)
@@ -94,14 +96,24 @@ async def _settle(entry_id: uuid.UUID, state: str, actual: Decimal | None) -> No
         await session.commit()
 
 
-async def _store(key: str, operation: str, provider: str, result: dict) -> None:
+async def _store(
+    key: str, operation: str, provider: str, result: dict, file_key: str | None
+) -> None:
     async with get_sessionmaker()() as session:
+        insert = pg_insert(ProviderCacheEntry).values(
+            key=key, operation=operation, provider=provider, result=result, file_key=file_key
+        )
         await session.execute(
-            pg_insert(ProviderCacheEntry)
-            .values(key=key, operation=operation, provider=provider, result=result)
-            .on_conflict_do_nothing(index_elements=["key"])
+            insert.on_conflict_do_update(
+                index_elements=["key"], set_={"result": result, "file_key": file_key}
+            )
         )
         await session.commit()
+
+
+def file_key_for(operation: str, provider, parts: tuple[str, ...], extension: str) -> str:
+    """Where a file result for this input is cached in storage."""
+    return f"cache/{operation}/{cache_key(operation, provider.name, parts)}{extension}"
 
 
 async def call(
@@ -110,18 +122,21 @@ async def call(
     parts: tuple[str, ...],
     units: int,
     run: Callable[[], Awaitable[dict]],
+    *,
+    file_key: str | None = None,
 ) -> dict:
-    """Run `run()` (which returns a JSON-able dict) at most once per input, within budget."""
+    """Run `run()` (which returns a JSON-able dict) at most once per input, within budget.
+    With `file_key`, `run()` also writes its file there (see `file_key_for`)."""
     key = cache_key(operation, provider.name, parts)
     async with get_sessionmaker()() as session:
         hit = await session.get(ProviderCacheEntry, key)
-        if hit is not None:
+        if hit is not None and (hit.file_key is None or get_storage().exists(hit.file_key)):
             return hit.result
 
     budget = provider.budget
     if budget is None:
         result = await run()
-        await _store(key, operation, provider.name, result)
+        await _store(key, operation, provider.name, result, file_key)
         return result
 
     if not get_settings().live_ai_enabled:
@@ -138,5 +153,5 @@ async def call(
     costs = JOB_COST.get()
     if costs is not None:
         costs.append(estimate)
-    await _store(key, operation, provider.name, result)
+    await _store(key, operation, provider.name, result, file_key)
     return result

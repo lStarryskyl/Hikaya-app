@@ -8,7 +8,7 @@ Anything a caller may not see answers 404, so drafts do not leak their existence
 import asyncio
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import audio, consent, moderation, photos, pipeline, places
+from app import audio, consent, media, moderation, photos, pipeline, places
 from app.auth import current_user, current_user_optional
 from app.config import get_settings
 from app.db import get_session
@@ -49,6 +49,7 @@ class StoryFields(BaseModel):
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
     original_language: Language | None = None
+    narration_source: Literal["polished", "msa"] | None = None
 
 
 class AuthorOut(BaseModel):
@@ -66,6 +67,23 @@ class SegmentOut(BaseModel):
     start_ms: int
     end_ms: int
     text: str
+
+
+class NarrationOut(BaseModel):
+    url: str
+    content_type: str
+    voice: str
+    language: str
+    source: str
+    # "alignment" (from the voice provider) or "per_segment" (each line spoken and measured)
+    timing: str
+    # One per line of the text read, in the narration's own time.
+    segments: list[SegmentOut]
+
+
+class MediaOut(BaseModel):
+    url: str
+    content_type: str
 
 
 class LayerOut(BaseModel):
@@ -166,6 +184,9 @@ class StoryOut(BaseModel):
     curated: bool
     photos: list[photos.StoryPhotoOut]
     consent: ConsentOut | None
+    narration_source: str
+    narration: NarrationOut | None
+    slideshow: MediaOut | None
     # For the author and staff only; None for everyone else.
     moderation: ModerationOut | None = None
     review: ReviewOut | None = None
@@ -235,6 +256,31 @@ def _moderation_out(result) -> ModerationOut | None:
     )
 
 
+async def _narration_out(session: AsyncSession, story_id: uuid.UUID) -> NarrationOut | None:
+    found = await media.narration_for(session, story_id)
+    if found is None:
+        return None
+    row, asset = found
+    return NarrationOut(
+        url=media_url(asset),
+        content_type=asset.content_type,
+        voice=row.voice,
+        language=row.language,
+        source=row.source,
+        timing=row.timing,
+        segments=row.segments,
+    )
+
+
+async def _slideshow_out(session: AsyncSession, story_id: uuid.UUID) -> MediaOut | None:
+    asset = (
+        await session.execute(
+            select(Asset).where(Asset.story_id == story_id, Asset.kind == AssetKind.SLIDESHOW)
+        )
+    ).scalar_one_or_none()
+    return MediaOut(url=media_url(asset), content_type=asset.content_type) if asset else None
+
+
 async def to_out(session: AsyncSession, story: Story, *, private: bool = False) -> StoryOut:
     """`private` adds moderation and review details; pass it only for the author and staff."""
     author = await session.get(User, story.author_id)
@@ -274,6 +320,9 @@ async def to_out(session: AsyncSession, story: Story, *, private: bool = False) 
             else None
         ),
         curated=story.curated_at is not None,
+        narration_source=story.narration_source,
+        narration=await _narration_out(session, story.id),
+        slideshow=await _slideshow_out(session, story.id),
     )
     if private:
         out.moderation = _moderation_out(await moderation.latest(session, story.id))
@@ -285,6 +334,8 @@ async def to_out(session: AsyncSession, story: Story, *, private: bool = False) 
 
 async def _apply(session: AsyncSession, story: Story, fields: StoryFields) -> None:
     for name, value in fields.model_dump(exclude_unset=True).items():
+        if name == "narration_source" and value is None:
+            continue  # it always has a value; leaving it out keeps the current one
         if value is None and name in ("title", "place_name"):
             value = ""
         setattr(story, name, value.value if hasattr(value, "value") else value)
@@ -583,12 +634,13 @@ async def retry_step(
     story = await _own_story(session, story_id, user)
     if step not in pipeline.STEPS:
         raise HTTPException(404, "No such step.")
-    # The moderation check is retried while the story waits for it; text steps only while
-    # the story can still be edited.
+    # The moderation check is retried while the story waits for it; narration and the
+    # slideshow in any status (they follow publishing); text steps only while the story can
+    # still be edited.
     if step == moderation.STEP:
         if story.status != StoryStatus.MODERATING:
             raise HTTPException(409, "This story is not waiting for its check.")
-    else:
+    elif step not in (media.NARRATE, media.SLIDESHOW):
         _require_editable(story)
     if not await pipeline.retry(session, story, step):
         raise HTTPException(409, "Only a failed step can be retried.")

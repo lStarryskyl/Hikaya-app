@@ -40,7 +40,7 @@ async def sessionmaker():
             text(
                 "TRUNCATE jobs, pipeline_steps, text_layers, assets, stories, auth_sessions, users,"
                 " place_photos, places, spend_entries, provider_cache, story_photos,"
-                " moderation_results"
+                " moderation_results, narrations"
                 " CASCADE"
             )
         )

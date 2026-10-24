@@ -3,15 +3,19 @@ import { LAYER_LABELS, textDirection, textFont, timestamp, type LayerKind, type 
 
 /**
  * The player's transcript: pick a version, follow along as the line being spoken is
- * highlighted, and tap a line to jump there. All versions share the same timestamps.
+ * highlighted, and tap a line to jump there. All versions share the same timestamps, so
+ * `timing` (one entry per line, such as the narration's) can replace them for every version.
  */
 export default function TranscriptView({
   layers,
   elapsedMs,
   following,
   onSeek,
+  timing,
 }: {
   layers: TextLayer[]
+  /** Line times of what is playing, when it is not the recording (the narration). */
+  timing?: { start_ms: number; end_ms: number }[] | null
   elapsedMs: number
   following: boolean
   onSeek: (ms: number) => void
@@ -20,7 +24,8 @@ export default function TranscriptView({
     layers.some((l) => l.kind === 'polished') ? 'polished' : layers[0].kind,
   )
   const layer = layers.find((l) => l.kind === kind) ?? layers[0]
-  const activeIndex = layer.segments.findIndex((s) => elapsedMs >= s.start_ms && elapsedMs < s.end_ms)
+  const times = timing && timing.length === layer.segments.length ? timing : layer.segments
+  const activeIndex = times.findIndex((s) => elapsedMs >= s.start_ms && elapsedMs < s.end_ms)
   const activeRef = useRef<HTMLButtonElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
@@ -56,21 +61,22 @@ export default function TranscriptView({
       <div ref={listRef} className="relative max-h-[420px] space-y-1.5 overflow-y-auto pe-1 scrollbar-thin">
         {layer.segments.map((seg, i) => {
           const active = i === activeIndex
+          const startMs = times[i].start_ms
           return (
             <button
               key={seg.start_ms}
               ref={active ? activeRef : undefined}
               type="button"
-              onClick={() => onSeek(seg.start_ms)}
+              onClick={() => onSeek(startMs)}
               aria-current={active ? 'true' : undefined}
-              aria-label={`Play from ${timestamp(seg.start_ms)}`}
+              aria-label={`Play from ${timestamp(startMs)}`}
               className={`block w-full rounded-lg p-3 text-start text-[12.5px] leading-relaxed transition ${
                 active
                   ? 'border-s-2 border-terracotta bg-terracotta-light text-ink2'
                   : 'text-muted2 hover:bg-cream'
               }`}
             >
-              <span className="me-2 font-mono text-[10px] text-terracotta">{timestamp(seg.start_ms)}</span>
+              <span className="me-2 font-mono text-[10px] text-terracotta">{timestamp(startMs)}</span>
               <span {...direction} className={`${textFont(layer.language)} block`}>
                 {seg.text}
               </span>

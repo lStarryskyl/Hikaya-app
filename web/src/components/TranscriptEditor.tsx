@@ -3,7 +3,7 @@ import { AlertCircle, Check, Clock, Loader2, RotateCcw } from 'lucide-react'
 import { ApiError } from '../api'
 import { PillButton } from './ui'
 import {
-  LAYER_LABELS, MAX_SEGMENT_CHARS, STEP_LABELS, editLayer, getPipeline, getStory, retryStep,
+  LAYER_LABELS, MAX_SEGMENT_CHARS, MEDIA_STEPS, STEP_LABELS, editLayer, getPipeline, getStory, retryStep,
   textDirection, textFont, timestamp,
   type LayerKind, type PipelineStatus, type StoryRecord,
 } from '../stories'
@@ -126,7 +126,8 @@ export default function TranscriptEditor({
           <p className="text-sm text-muted2">Starting…</p>
         ) : (
           <ol className="space-y-3">
-            {pipeline.steps.map((s) => (
+            {/* Narration and the slideshow run after submitting; the player shows them. */}
+            {pipeline.steps.filter((s) => !MEDIA_STEPS.includes(s.step)).map((s) => (
               <li key={s.step} className="text-sm">
                 <div className="flex items-center gap-2">
                   {s.status === 'done' ? (

@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import gateway
+from app import gateway, media
 from app.config import get_settings
 from app.db import get_sessionmaker
 from app.errors import UserFacingError
@@ -53,17 +53,26 @@ async def judged_texts(session: AsyncSession, story: Story) -> list[str]:
 
 async def submit(session: AsyncSession, story: Story) -> None:
     """Move the story to `moderating` and queue the check, in the caller's transaction."""
+    if not await step_done(session, story.id, "polish"):
+        raise TextNotReady("Wait for the polished text to finish, then submit again.")
     if story.original_language != "english" and not await step_done(
         session, story.id, "translate_en"
     ):
         # An older translation would be judged in place of the text the member now has.
         raise TextNotReady("Wait for the English translation to finish, then submit again.")
+    if media.source_step(story) == "translate_msa" and not await step_done(
+        session, story.id, "translate_msa"
+    ):
+        # The narration reads the MSA translation, so it must be the latest one.
+        raise TextNotReady("Wait for the MSA translation to finish, then submit again.")
     texts = await judged_texts(session, story)
     input_hash = step_hash(STEP, get_settings().llm_provider, json.dumps(texts, ensure_ascii=False))
     story.status = StoryStatus.MODERATING.value
     story.published_at = None
     # Every submission is checked, even when the text is the same as last time.
     await queue_step(session, story.id, STEP, STEP, input_hash, always=True)
+    # Narration starts alongside the check, so reviewers hear held stories too.
+    await media.queue(session, story)
 
 
 def _validated(verdicts: dict) -> dict[str, dict]:

@@ -18,6 +18,12 @@ from app.config import get_settings
 _SAFE_KEY = re.compile(r"^[A-Za-z0-9_\-]+(/[A-Za-z0-9_\-]+)*(\.[A-Za-z0-9]+)?$")
 
 
+def partial_key(key: str) -> str:
+    """Where a file is written before it replaces `key`: `a/b.mp3` -> `a/b-part.mp3`."""
+    stem, dot, extension = key.rpartition(".")
+    return f"{stem}-part.{extension}" if dot and "/" not in extension else f"{key}-part"
+
+
 class TooLarge(Exception):
     pass
 
@@ -65,6 +71,27 @@ class LocalStorage:
         path = self.path(prefix)
         if path.is_dir():
             shutil.rmtree(path)
+
+    def prepare(self, key: str) -> Path:
+        """The path for a tool (such as FFmpeg) to write `key` to, with its folder made."""
+        path = self.path(key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def write_bytes(self, key: str, data: bytes) -> None:
+        """Write `key` whole: readers see the old file or the new one, never a partial one."""
+        partial = self.prepare(partial_key(key))
+        partial.write_bytes(data)
+        partial.replace(self.path(key))
+
+    def copy(self, source: str, target: str) -> None:
+        partial = self.prepare(partial_key(target))
+        shutil.copyfile(self.path(source), partial)
+        partial.replace(self.path(target))
+
+    def move(self, source: str, target: str) -> None:
+        self.prepare(target)
+        self.path(source).replace(self.path(target))
 
     def delete(self, *keys: str) -> None:
         for key in keys:

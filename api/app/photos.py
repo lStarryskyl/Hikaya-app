@@ -237,3 +237,23 @@ async def serve_story_photo(
 
 async def photo_limit_response(_request: Request, exc: PhotoLimit) -> JSONResponse:
     return JSONResponse({"detail": exc.message}, status_code=exc.status)
+
+
+async def slideshow_images(session: AsyncSession, story: Story) -> list[str]:
+    """Storage keys of the largest copy of each story photo, in order; without any, the
+    story's place photo. Empty when there is no picture at all."""
+    rows = await _rows(session, [story.id])
+    gallery = await _place_photos(session, rows)
+    keys = []
+    for row in rows:
+        if row.place_photo_slug:
+            place_photo = gallery.get(row.place_photo_slug)
+            if place_photo is not None:
+                keys.append(places.photo_key(place_photo.slug, max(place_photo.widths)))
+        else:
+            keys.append(_upload_key(row.id, story.id, max(row.widths)))
+    if not keys:
+        fallback = (await places.place_covers_for(session, [story])).get(story.id)
+        if fallback is not None:
+            keys.append(places.photo_key(fallback.slug, max(fallback.widths)))
+    return keys

@@ -12,7 +12,7 @@ import { getPlaces } from '../discover'
 import {
   CATEGORY_LABELS, LANGUAGE_LABELS, createStory, formatDuration, getConsent, getLimits, getStory,
   hasTranscript,
-  submitStory, updateStory, uploadAudio, type CategoryValue, type LanguageValue, type StoryRecord,
+  submitStory, updateStory, uploadAudio, type CategoryValue, type LanguageValue, type NarrationSource, type StoryRecord,
 } from '../stories'
 import { useApi } from '../useApi'
 
@@ -37,6 +37,7 @@ export default function CreateStoryPage() {
   const [language, setLanguage] = useState<LanguageValue | ''>('')
   const [title, setTitle] = useState('')
   const [category, setCategory] = useState<CategoryValue | ''>('')
+  const [narrationSource, setNarrationSource] = useState<NarrationSource>('polished')
   const [placeName, setPlaceName] = useState('')
   const [pin, setPin] = useState<Pin | null>(null)
   const [agreed, setAgreed] = useState(false)
@@ -68,6 +69,7 @@ export default function CreateStoryPage() {
         setLanguage(story.original_language ?? '')
         setTitle(story.title)
         setCategory(story.category ?? '')
+        setNarrationSource(story.narration_source)
         setPlaceName(story.place_name)
         if (story.latitude !== null && story.longitude !== null)
           setPin({ lat: story.latitude, lng: story.longitude })
@@ -128,6 +130,7 @@ export default function CreateStoryPage() {
         place_name: placeName.trim(),
         latitude: pin?.lat ?? null,
         longitude: pin?.lng ?? null,
+        narration_source: narrationSource,
       })
       const published = await submitStory(draft.id, consent.data.version)
       navigate(`/story/${published.id}`)
@@ -385,6 +388,22 @@ export default function CreateStoryPage() {
               </select>
             </label>
             {placeField()}
+            {draft.original_language && draft.original_language !== 'msa' && (
+              <label className="block text-xs font-medium text-muted2">
+                The narration reads
+                <select
+                  value={narrationSource}
+                  onChange={(e) => setNarrationSource(e.target.value as NarrationSource)}
+                  className={fieldClass}
+                >
+                  <option value="polished">Your polished words ({LANGUAGE_LABELS[draft.original_language]})</option>
+                  <option value="msa">The Modern Standard Arabic translation</option>
+                </select>
+                <span className="mt-1 block text-[11px] font-normal text-muted">
+                  A voice reads your story aloud once it is published; listeners can switch between it and your recording.
+                </span>
+              </label>
+            )}
             {consent.data && (
               <label className="flex items-start gap-2 rounded-lg bg-cream p-3 text-xs leading-relaxed text-ink2">
                 <input

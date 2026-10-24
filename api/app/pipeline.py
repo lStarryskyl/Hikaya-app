@@ -19,11 +19,12 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import gateway, jobs
+from app.assets import asset_of
 from app.config import get_settings
 from app.db import get_sessionmaker
 from app.errors import INTERNAL_PREFIX, UserFacingError
 from app.handlers import handler
-from app.models import Asset, AssetKind, Job, JobStatus, PipelineStep, Story, TextLayer
+from app.models import AssetKind, Job, JobStatus, PipelineStep, Story, TextLayer
 from app.providers import Segment, Transcript, language_model, speech_to_text
 from app.storage import get_storage
 
@@ -38,7 +39,20 @@ TARGETS: dict[str, tuple[str, ...]] = {
 }
 TARGET_LAYER = {"english": "translation_en", "msa": "translation_msa"}
 TARGET_STEP = {"english": "translate_en", "msa": "translate_msa"}
-STEPS = ("transcribe", "polish", "translate_en", "translate_msa", "moderate")
+# Text steps, then the ones that run on submit (moderate) and once published (narrate,
+# slideshow); those later ones show in the progress only once queued.
+STEPS = (
+    "transcribe",
+    "polish",
+    "translate_en",
+    "translate_msa",
+    "moderate",
+    "narrate",
+    "slideshow",
+)
+# Made after submitting, from the finished text; see app/media.py.
+MEDIA_STEPS = ("narrate", "slideshow")
+LATER_STEPS = ("moderate", *MEDIA_STEPS)
 # Which step writes each layer.
 PRODUCED_BY = {
     VERBATIM: "transcribe",
@@ -153,11 +167,7 @@ STALE = {"stale": True}
 
 
 async def _audio_digest(story_id: uuid.UUID, session: AsyncSession) -> str | None:
-    asset = (
-        await session.execute(
-            select(Asset).where(Asset.story_id == story_id, Asset.kind == AssetKind.AUDIO)
-        )
-    ).scalar_one_or_none()
+    asset = await asset_of(session, story_id, AssetKind.AUDIO)
     if asset is None:
         return None
     path = get_storage().path(asset.storage_key)
@@ -230,11 +240,7 @@ async def transcribe(payload: dict) -> dict:
         story = await session.get(Story, uuid.UUID(payload["story_id"]))
         if story is None or not await is_current(session, payload):
             return STALE
-        asset = (
-            await session.execute(
-                select(Asset).where(Asset.story_id == story.id, Asset.kind == AssetKind.AUDIO)
-            )
-        ).scalar_one()
+        asset = await asset_of(session, story.id, AssetKind.AUDIO)
         stt = speech_to_text()
         path = get_storage().path(asset.storage_key)
         language, duration = story.original_language, story.duration_ms or 0
@@ -346,10 +352,10 @@ async def status(session: AsyncSession, story: Story) -> tuple[list[StepStatus],
         for step in expected_steps(story.original_language)
     ]
     complete = all(s.status == JobStatus.DONE for s in out)
-    # The moderation check appears once the story has been submitted; "complete" is about
-    # the text being ready, so it does not count here.
-    if "moderate" in rows:
-        out.append(await _step_status(session, "moderate", rows["moderate"]))
+    # "complete" is about the text being ready, so the later steps do not count here.
+    for step in LATER_STEPS:
+        if step in rows:
+            out.append(await _step_status(session, step, rows[step]))
     return out, complete
 
 

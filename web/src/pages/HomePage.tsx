@@ -19,7 +19,7 @@ const badgeTone: Record<CategoryValue, 'terracotta' | 'gold' | 'teal'> = {
 
 export default function HomePage() {
   const feed = useApi(() => getFeed({ limit: 50 }), [])
-  const museum = useApi(() => getFeed({ curated: true, limit: 50 }), [])
+  const museum = useApi(() => getFeed({ curated: true, limit: 3 }), [])
   const pins = useApi(getPins, [])
   const places = useApi(getPlaces, [])
 
@@ -29,9 +29,9 @@ export default function HomePage() {
   const recentCount = (pins.data ?? []).filter((p) => p.kind === 'recent').length
   const hero = findPhoto(places.data, 'petra-treasury-hero') ?? places.data?.[0]?.cover
   const stats = [
-    { label: 'Stories told', value: stories.length || '…' },
+    { label: 'Stories told', value: feed.data ? feed.data.total : '…' },
     { label: 'Places', value: places.data?.length || '…' },
-    { label: 'In the museum', value: museum.data ? museum.data.items.length : '…' },
+    { label: 'In the museum', value: museum.data ? museum.data.total : '…' },
   ]
 
   return (

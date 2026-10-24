@@ -37,7 +37,8 @@ export interface AuditEntry {
 
 export interface SpendSummary {
   total_usd: string
-  today_usd: string
+  /** Today on the card budget, which is what the daily cap counts. */
+  today_card_usd: string
   card_usd: string
   azure_usd: string
   by_provider: { provider: string; usd: string }[]

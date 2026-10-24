@@ -26,6 +26,8 @@ export interface StoryCard {
 export interface FeedPage {
   items: StoryCard[]
   next_cursor: string | null
+  /** How many stories match, across all pages. */
+  total: number
 }
 
 export type PinKind = 'featured' | 'recent' | 'ordinary'
@@ -57,8 +59,8 @@ export function getFeed({
 }: { limit?: number; cursor?: string | null; curated?: boolean } = {}) {
   const params = new URLSearchParams({ limit: String(limit) })
   if (cursor) params.set('cursor', cursor)
-  // true: only stories in the museum
-  if (curated !== undefined) params.set('curated', String(curated))
+  // Only stories in the museum.
+  if (curated) params.set('curated', 'true')
   return api<FeedPage>(`/stories?${params}`)
 }
 

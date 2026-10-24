@@ -198,7 +198,7 @@ def media_url(asset: Asset) -> str:
     return f"/media/{asset.id}"
 
 
-def _parse_id(raw: str) -> uuid.UUID:
+def parse_story_id(raw: str) -> uuid.UUID:
     try:
         return uuid.UUID(raw)
     except ValueError:
@@ -206,14 +206,14 @@ def _parse_id(raw: str) -> uuid.UUID:
 
 
 async def _visible_story(session: AsyncSession, story_id: str, user: User | None) -> Story:
-    story = await session.get(Story, _parse_id(story_id))
+    story = await session.get(Story, parse_story_id(story_id))
     if story is None or not can_view(story, user):
         raise HTTPException(404, "Story not found.")
     return story
 
 
 async def _own_or_staff_story(session: AsyncSession, story_id: str, user: User | None) -> Story:
-    story = await session.get(Story, _parse_id(story_id))
+    story = await session.get(Story, parse_story_id(story_id))
     if (
         story is None
         or user is None
@@ -224,7 +224,7 @@ async def _own_or_staff_story(session: AsyncSession, story_id: str, user: User |
 
 
 async def _own_story(session: AsyncSession, story_id: str, user: User) -> Story:
-    story = await session.get(Story, _parse_id(story_id))
+    story = await session.get(Story, parse_story_id(story_id))
     if story is None or story.author_id != user.id:
         raise HTTPException(404, "Story not found.")
     return story

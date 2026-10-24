@@ -121,9 +121,9 @@ These exist on purpose while the build is in progress. Each closes with the tick
 
 - Reviewers and admins share one staff page: held stories (labels, reasons, the text judged, the recording and the narration) with Publish and Send back (an optional note the author sees), and museum candidates (published, not curated, not set aside) with Add to museum and Not now. Admins also remove stories from the museum and see the spend summary and the log of staff actions.
 - Staff never act on their own stories; the page says so, and the API refuses it. Each action locks the story, so two staff cannot act on it at once, and writes an audit event (actor, action, target, time, and the note when there is one) in the same transaction. Audit events are kept when the story is deleted.
-- "Not now" sets a candidate aside for good; curating it later (from elsewhere) clears that. Removing a story from the museum does not make it a candidate again.
-- The museum is curation, not a separate system: a Curated badge, a Museum chip on Explore, and the Home featured row, which shows only curated stories (and says so when there are none). The public feed takes `curated=true`.
-- The spend summary counts the ledger as the caps do: settled calls at their cost, calls in flight at their reservation, released reservations not at all. It shows the total, today, the card and Azure budgets against their limits, and each provider.
+- "Not now" sets a candidate aside; the staff page does not offer it again (the API can still curate it, which clears that). Removing a story from the museum also sets it aside, so it does not come straight back as a candidate.
+- The museum is curation, not a separate system: a Curated badge, a Museum chip on Explore, and the Home featured row, which shows only curated stories (and says so when there are none). The public feed takes `curated=true` and says how many stories match in total, so the Museum chip and the museum count are complete however many stories exist.
+- The spend summary counts the ledger as the caps do: settled calls at their cost, calls in flight at their reservation, released reservations not at all. It shows the total, the card budget's spending today (what the daily cap counts), the card and Azure budgets against their limits, and each provider. The caps and the summary share one definition of what counts.
 
 ## Creating a story
 

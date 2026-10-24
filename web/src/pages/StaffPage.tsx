@@ -26,6 +26,7 @@ export default function StaffPage() {
   const audit = useApi(() => (admin ? getAuditLog() : Promise.resolve(null)), [round, admin])
   const spend = useApi(() => (admin ? getSpend() : Promise.resolve(null)), [round, admin])
   const [busy, setBusy] = useState<string | null>(null)
+  // Buttons stay off until the lists have reloaded, so nobody acts on a row that has moved.
   const [error, setError] = useState('')
 
   if (!isStaff(user?.role)) {
@@ -52,6 +53,7 @@ export default function StaffPage() {
   }
 
   const data = page.data
+  const locked = busy !== null || page.loading
   return (
     <div className="mx-auto max-w-5xl space-y-8 px-4 py-6 sm:px-6">
       <div>
@@ -80,7 +82,7 @@ export default function StaffPage() {
               key={s.id}
               story={s}
               busy={busy === s.id}
-              disabled={busy !== null}
+              disabled={locked}
               onApprove={() => act(s.id, () => approveStory(s.id))}
               onReject={(note) => act(s.id, () => rejectStory(s.id, note))}
             />
@@ -105,7 +107,7 @@ export default function StaffPage() {
                     type="button"
                     variant="teal"
                     className="!py-1.5 text-xs"
-                    disabled={busy !== null}
+                    disabled={locked}
                     onClick={() => act(s.id, () => curateStory(s.id))}
                     aria-label={`Add ${s.title} to the museum`}
                   >
@@ -115,7 +117,7 @@ export default function StaffPage() {
                     type="button"
                     variant="outline"
                     className="!py-1.5 text-xs"
-                    disabled={busy !== null}
+                    disabled={locked}
                     onClick={() => act(s.id, () => dismissCandidate(s.id))}
                     aria-label={`Not now: ${s.title}`}
                   >
@@ -144,7 +146,7 @@ export default function StaffPage() {
                     type="button"
                     variant="outline"
                     className="!py-1.5 text-xs"
-                    disabled={busy !== null}
+                    disabled={locked}
                     onClick={() => act(s.id, () => uncurateStory(s.id))}
                     aria-label={`Remove ${s.title} from the museum`}
                   >
@@ -163,7 +165,7 @@ export default function StaffPage() {
           </h2>
           <div className="grid gap-3 sm:grid-cols-4">
             <Stat label="Total" value={`$${spend.data.total_usd}`} />
-            <Stat label="Today" value={`$${spend.data.today_usd}`} note={`daily card limit $${spend.data.daily_cap_usd}`} />
+            <Stat label="Card, today" value={`$${spend.data.today_card_usd}`} note={`daily limit $${spend.data.daily_cap_usd}`} />
             <Stat label="Card" value={`$${spend.data.card_usd}`} note={`limit $${spend.data.card_cap_usd}`} />
             <Stat label="Azure grant" value={`$${spend.data.azure_usd}`} note={`limit $${spend.data.azure_cap_usd}`} />
           </div>
@@ -355,7 +357,7 @@ function HeldCard({
             <PillButton type="submit" className="!py-1.5 text-xs" disabled={disabled}>
               {busy ? 'Sending back…' : 'Send back to the author'}
             </PillButton>
-            <PillButton type="button" variant="outline" className="!py-1.5 text-xs" onClick={() => setRejecting(false)}>
+            <PillButton type="button" variant="outline" className="!py-1.5 text-xs" disabled={busy} onClick={() => setRejecting(false)}>
               Cancel
             </PillButton>
           </div>

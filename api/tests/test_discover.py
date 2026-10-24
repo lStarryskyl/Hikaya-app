@@ -116,7 +116,7 @@ async def test_a_story_card_says_whether_it_is_curated(client, session, author):
 
 async def test_an_empty_feed_is_not_an_error(client):
     body = (await client.get("/api/v1/stories")).json()
-    assert body == {"items": [], "next_cursor": None}
+    assert body == {"items": [], "next_cursor": None, "total": 0}
 
 
 async def test_a_cursor_without_a_timezone_is_refused(client):

@@ -1,6 +1,6 @@
 """Staff review and the museum: held stories, curation, self-review, audit and spending."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -260,15 +260,18 @@ async def test_an_admin_can_remove_a_story_from_the_museum(client, session, auth
     await session.refresh(story)
     assert story.curated_at is None and story.curated_by is None
     assert (await client.delete(f"/api/v1/staff/stories/{story.id}/curation")).status_code == 409
+    # It does not come back as a candidate.
+    assert (await client.get("/api/v1/staff/review")).json()["candidates"] == []
 
 
 async def test_the_feed_can_list_only_curated_stories(client, session, author):
     await add_story(session, author.id, "Plain")
     await add_story(session, author.id, "In the museum", curated=True)
-    everything = (await client.get("/api/v1/stories")).json()["items"]
-    museum = (await client.get("/api/v1/stories?curated=true")).json()["items"]
-    assert len(everything) == 2
-    assert [s["title"] for s in museum] == ["In the museum"]
+    everything = (await client.get("/api/v1/stories")).json()
+    museum = (await client.get("/api/v1/stories?curated=true&limit=1")).json()
+    assert len(everything["items"]) == 2 and everything["total"] == 2
+    assert [s["title"] for s in museum["items"]] == ["In the museum"]
+    assert museum["total"] == 1
 
 
 # --- self-review ---
@@ -335,7 +338,7 @@ async def test_every_staff_action_is_audited(client, session, author, staff):
 
 
 async def test_the_spend_summary_totals_the_ledger(client, session, staff):
-    def entry(provider, usd, state="committed", budget="card", actual=None):
+    def entry(provider, usd, state="committed", budget="card", actual=None, days_ago=0):
         return SpendEntry(
             provider=provider,
             operation="op",
@@ -343,6 +346,7 @@ async def test_the_spend_summary_totals_the_ledger(client, session, staff):
             estimated_usd=Decimal(usd),
             actual_usd=Decimal(actual) if actual else None,
             state=state,
+            created_at=datetime.now(UTC) - timedelta(days=days_ago),
         )
 
     session.add_all(
@@ -352,16 +356,20 @@ async def test_the_spend_summary_totals_the_ledger(client, session, staff):
             entry("azure", "2.00", budget="azure"),
             entry("elevenlabs", "9.00", state="released"),  # never spent
             entry("fal", "0.25", state="reserved"),  # in flight, counts until settled
+            entry("elevenlabs", "3.00", days_ago=2),  # not today
         ]
     )
     await session.commit()
     await sign_in(client, ADMIN)
     summary = (await client.get("/api/v1/staff/spend")).json()
-    assert summary["total_usd"] == "4.15"
-    assert summary["today_usd"] == "4.15"
+    assert summary["total_usd"] == "7.15"
+    # Today, as the daily cap counts it: the card budget only.
+    assert summary["today_card_usd"] == "2.15"
+    assert summary["card_usd"] == "5.15"
+    assert summary["azure_usd"] == "2.00"
     assert {p["provider"]: p["usd"] for p in summary["by_provider"]} == {
         "azure": "2.00",
-        "elevenlabs": "1.90",
+        "elevenlabs": "4.90",
         "fal": "0.25",
     }
     assert summary["card_cap_usd"] and summary["daily_cap_usd"]

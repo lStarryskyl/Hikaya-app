@@ -24,7 +24,7 @@ const filters = ['All Stories', 'Museum', 'Ancient History', 'Oral Folklore', 'C
 
 function matchesFilter({ category, curated }: { category: string | null; curated: boolean }, filter: string) {
   if (filter === 'All Stories') return true
-  // The museum is the stories staff have curated.
+  // The museum is the stories staff have curated (loaded with the API's filter).
   if (filter === 'Museum') return curated
   if (filter === 'Ancient History') return category === 'history'
   if (filter === 'Oral Folklore') return category === 'folklore'
@@ -38,14 +38,20 @@ export default function ExploreMapPage() {
   const [query, setQuery] = useState('')
   const [mapMode, setMapMode] = useState<'compass' | 'time' | 'heat'>('compass')
   const feed = useApi(() => getFeed({ limit: 100 }), [])
+  // The museum comes from the API's own filter, so it is complete however many stories exist.
+  const museum = useApi(() => getFeed({ curated: true, limit: 100 }), [])
   const pins = useApi(getPins, [])
   const stories = useMemo(() => feed.data?.items ?? [], [feed.data])
+  const source = useMemo(
+    () => (activeFilter === 'Museum' ? (museum.data?.items ?? []) : stories),
+    [activeFilter, museum.data, stories],
+  )
   const [focusedId, setFocusedId] = useState<string | null>(null)
 
   // Search across title, place, storyteller and excerpt; the server-side search arrives in #15.
   const results = useMemo(() => {
     const q = query.trim().toLowerCase()
-    return stories.filter((s) => {
+    return source.filter((s) => {
       if (!matchesFilter(s, activeFilter)) return false
       if (!q) return true
       return (
@@ -55,7 +61,7 @@ export default function ExploreMapPage() {
         s.excerpt.toLowerCase().includes(q)
       )
     })
-  }, [stories, activeFilter, query])
+  }, [source, activeFilter, query])
 
   useEffect(() => {
     if (!focusedId && stories.length) setFocusedId((stories.find((s) => s.curated) ?? stories[0]).id)
@@ -74,7 +80,7 @@ export default function ExploreMapPage() {
         <div>
           <h1 className="font-serif text-2xl">Explore Jordan</h1>
           <p className="text-sm text-muted">
-            {feed.loading ? 'Loading stories…' : `Discover ${stories.length} stories across the Kingdom`}
+            {feed.loading ? 'Loading stories…' : `Discover ${feed.data?.total ?? stories.length} stories across the Kingdom`}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

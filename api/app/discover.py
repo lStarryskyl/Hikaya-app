@@ -43,6 +43,8 @@ class StoryCard(BaseModel):
 
 class FeedPage(BaseModel):
     items: list[StoryCard]
+    # How many stories match, across all pages.
+    total: int
     next_cursor: str | None
 
 
@@ -138,12 +140,16 @@ def _decode_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
 async def feed(
     limit: int = Query(12, ge=1, le=100),
     cursor: str | None = None,
+    curated: bool = Query(False, description="true: only stories in the museum"),
     session: AsyncSession = Depends(get_session),
 ) -> FeedPage:
     """Published stories, newest first. Pass `next_cursor` back to get the next page."""
     query = select(Story).where(
         Story.status == StoryStatus.PUBLISHED, Story.published_at.is_not(None)
     )
+    if curated:
+        query = query.where(Story.curated_at.is_not(None))
+    total = (await session.execute(select(func.count()).select_from(query.subquery()))).scalar_one()
     if cursor:
         published_at, story_id = _decode_cursor(cursor)
         query = query.where(tuple_(Story.published_at, Story.id) < (published_at, story_id))
@@ -154,6 +160,7 @@ async def feed(
     return FeedPage(
         items=await cards_for(session, stories),
         next_cursor=_encode_cursor(stories[-1]) if more else None,
+        total=total,
     )
 
 

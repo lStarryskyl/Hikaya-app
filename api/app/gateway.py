@@ -33,6 +33,22 @@ JOB_COST: ContextVar[list[Decimal] | None] = ContextVar("job_cost", default=None
 ACTIVE = ("reserved", "committed")
 
 
+def ledger_total():
+    """Spending as the caps count it: settled calls at their cost, calls in flight at their
+    reservation, released reservations not at all. Use with `counted()`."""
+    return func.coalesce(
+        func.sum(func.coalesce(SpendEntry.actual_usd, SpendEntry.estimated_usd)), 0
+    )
+
+
+def counted():
+    return SpendEntry.state.in_(ACTIVE)
+
+
+def since_midnight():
+    return SpendEntry.created_at >= func.date_trunc("day", func.now())
+
+
 class LiveAIOff(UserFacingError):
     def __init__(self) -> None:
         super().__init__(
@@ -55,18 +71,10 @@ async def _reserve(provider: str, operation: str, budget: str, estimate: Decimal
     async with get_sessionmaker()() as session:
         # One reservation at a time, so two workers cannot both squeeze under a cap.
         await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('hikaya-spend'))"))
-        spent = func.coalesce(
-            func.sum(func.coalesce(SpendEntry.actual_usd, SpendEntry.estimated_usd)), 0
-        )
-        active = (SpendEntry.budget == budget) & SpendEntry.state.in_(ACTIVE)
+        spent = ledger_total()
+        active = (SpendEntry.budget == budget) & counted()
         total = (await session.execute(select(spent).where(active))).scalar_one()
-        today = (
-            await session.execute(
-                select(spent).where(
-                    active, SpendEntry.created_at >= func.date_trunc("day", func.now())
-                )
-            )
-        ).scalar_one()
+        today = (await session.execute(select(spent).where(active, since_midnight()))).scalar_one()
         over = None
         if budget == "card":
             if total + estimate > Decimal(str(settings.spend_cap_usd_total)):

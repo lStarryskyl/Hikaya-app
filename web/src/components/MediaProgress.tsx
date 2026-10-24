@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { AlertCircle, Loader2 } from 'lucide-react'
 import { ApiError } from '../api'
+import { useAuth } from '../auth'
+import { isStaff } from '../staff'
 import { MEDIA_STEPS, STEP_LABELS, getPipeline, getStory, retryStep, type PipelineStep, type StoryRecord } from '../stories'
 import { PillButton } from './ui'
 
@@ -23,9 +25,13 @@ export default function MediaProgress({
   const [round, setRound] = useState(0)
   // Steps seen unfinished; when one of them is done, the story has a new file to show.
   const unfinished = useRef(new Set<string>())
+  const { user } = useAuth()
+  // Only the author and staff can see a story's progress; nobody else asks for it.
+  const allowed = !!user && (user.id === story.author.id || isStaff(user.role))
 
   // Look every few seconds while a step is still running; each look waits for the last.
   useEffect(() => {
+    if (!allowed) return
     let stopped = false
     let timer: number | undefined
     async function look() {
@@ -61,7 +67,7 @@ export default function MediaProgress({
       stopped = true
       window.clearTimeout(timer)
     }
-  }, [story.id, story.narration, story.slideshow, onChange, round])
+  }, [allowed, story.id, story.narration, story.slideshow, onChange, round])
 
   async function retry(step: PipelineStep['step']) {
     setRetrying(step)
@@ -77,7 +83,7 @@ export default function MediaProgress({
   }
 
   const shown = steps.filter((s) => s.status !== 'done')
-  if (shown.length === 0) return null
+  if (!allowed || shown.length === 0) return null
   return (
     <div role="status" className="mb-4 space-y-2 rounded-xl2 border border-border bg-panel p-4 text-sm">
       {shown.map((s) => (

@@ -31,7 +31,8 @@ export default function ProfilePage() {
   const places = useApi(getPlaces, [])
   const stories = feed.data?.items ?? []
   const [refresh, setRefresh] = useState(0)
-  const mine = useApi(getMyStories, [refresh])
+  // Signed-out visitors are asked to sign in instead, so their list is never requested.
+  const mine = useApi(() => (user ? getMyStories() : Promise.resolve([])), [refresh, user?.id])
   const [confirming, setConfirming] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState('')

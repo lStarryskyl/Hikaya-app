@@ -1,5 +1,7 @@
 import { NavLink } from 'react-router-dom'
-import { BookOpen, Home, Map, PlusCircle, Rss } from 'lucide-react'
+import { BookOpen, Home, Map, PlusCircle, Rss, ShieldCheck } from 'lucide-react'
+import { useAuth } from '../auth'
+import { isStaff } from '../staff'
 
 const navItems = [
   { to: '/', label: 'Home', icon: Home, end: true },
@@ -9,6 +11,11 @@ const navItems = [
 ]
 
 export default function Sidebar() {
+  const { user } = useAuth()
+  // Staff see their review page; the API refuses it to everyone else anyway.
+  const items = isStaff(user?.role)
+    ? [...navItems, { to: '/staff', label: 'Staff Review', icon: ShieldCheck, end: false }]
+    : navItems
   return (
     <aside className="hidden w-[232px] shrink-0 flex-col justify-between border-r border-border bg-panel px-4 py-5 md:flex">
       <div>
@@ -23,7 +30,7 @@ export default function Sidebar() {
         </div>
 
         <nav className="flex flex-col gap-1">
-          {navItems.map(({ to, label, icon: Icon, end }) => (
+          {items.map(({ to, label, icon: Icon, end }) => (
             <NavLink
               key={to}
               to={to}

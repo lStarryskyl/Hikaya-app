@@ -31,6 +31,7 @@ from app.models import (
     StoryStatus,
     User,
 )
+from app.providers import MODERATION_LABELS
 from app.storage import LocalStorage, TooLarge, get_storage
 from app.visibility import STAFF_ROLES, can_view
 
@@ -197,7 +198,7 @@ def media_url(asset: Asset) -> str:
     return f"/media/{asset.id}"
 
 
-def _parse_id(raw: str) -> uuid.UUID:
+def parse_story_id(raw: str) -> uuid.UUID:
     try:
         return uuid.UUID(raw)
     except ValueError:
@@ -205,14 +206,14 @@ def _parse_id(raw: str) -> uuid.UUID:
 
 
 async def _visible_story(session: AsyncSession, story_id: str, user: User | None) -> Story:
-    story = await session.get(Story, _parse_id(story_id))
+    story = await session.get(Story, parse_story_id(story_id))
     if story is None or not can_view(story, user):
         raise HTTPException(404, "Story not found.")
     return story
 
 
 async def _own_or_staff_story(session: AsyncSession, story_id: str, user: User | None) -> Story:
-    story = await session.get(Story, _parse_id(story_id))
+    story = await session.get(Story, parse_story_id(story_id))
     if (
         story is None
         or user is None
@@ -223,7 +224,7 @@ async def _own_or_staff_story(session: AsyncSession, story_id: str, user: User |
 
 
 async def _own_story(session: AsyncSession, story_id: str, user: User) -> Story:
-    story = await session.get(Story, _parse_id(story_id))
+    story = await session.get(Story, parse_story_id(story_id))
     if story is None or story.author_id != user.id:
         raise HTTPException(404, "Story not found.")
     return story
@@ -249,9 +250,11 @@ def _moderation_out(result) -> ModerationOut | None:
         return None
     return ModerationOut(
         held=result.held,
+        # In the fixed label order; JSONB does not keep the order keys were written in.
         labels=[
             LabelOut(label=label, raised=v["raised"], reason=v["reason"])
-            for label, v in result.labels.items()
+            for label in MODERATION_LABELS
+            if (v := result.labels.get(label)) is not None
         ],
         judged_at=result.created_at,
     )

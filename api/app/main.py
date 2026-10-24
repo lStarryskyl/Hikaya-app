@@ -16,6 +16,7 @@ from app.discover import router as discover_router
 from app.photos import PhotoLimit, photo_limit_response
 from app.photos import media_router as story_photo_media_router
 from app.places import media_router as place_media_router
+from app.staff import router as staff_router
 from app.stories import me_router, media_router
 from app.stories import router as stories_router
 
@@ -53,6 +54,7 @@ api_v1.include_router(auth_router)
 api_v1.include_router(discover_router)
 api_v1.include_router(stories_router)
 api_v1.include_router(me_router)
+api_v1.include_router(staff_router)
 
 app.include_router(api_v1)
 app.include_router(place_media_router)

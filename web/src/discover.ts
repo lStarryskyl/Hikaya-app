@@ -50,9 +50,15 @@ export interface Place {
   story_count: number
 }
 
-export function getFeed({ limit = 12, cursor }: { limit?: number; cursor?: string | null } = {}) {
+export function getFeed({
+  limit = 12,
+  cursor,
+  curated,
+}: { limit?: number; cursor?: string | null; curated?: boolean } = {}) {
   const params = new URLSearchParams({ limit: String(limit) })
   if (cursor) params.set('cursor', cursor)
+  // true: only stories in the museum
+  if (curated !== undefined) params.set('curated', String(curated))
   return api<FeedPage>(`/stories?${params}`)
 }
 

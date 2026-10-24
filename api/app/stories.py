@@ -31,6 +31,7 @@ from app.models import (
     StoryStatus,
     User,
 )
+from app.providers import MODERATION_LABELS
 from app.storage import LocalStorage, TooLarge, get_storage
 from app.visibility import STAFF_ROLES, can_view
 
@@ -249,9 +250,11 @@ def _moderation_out(result) -> ModerationOut | None:
         return None
     return ModerationOut(
         held=result.held,
+        # In the fixed label order; JSONB does not keep the order keys were written in.
         labels=[
             LabelOut(label=label, raised=v["raised"], reason=v["reason"])
-            for label, v in result.labels.items()
+            for label in MODERATION_LABELS
+            if (v := result.labels.get(label)) is not None
         ],
         judged_at=result.created_at,
     )

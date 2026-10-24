@@ -138,12 +138,17 @@ def _decode_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
 async def feed(
     limit: int = Query(12, ge=1, le=100),
     cursor: str | None = None,
+    curated: bool | None = Query(None, description="true: only stories in the museum"),
     session: AsyncSession = Depends(get_session),
 ) -> FeedPage:
     """Published stories, newest first. Pass `next_cursor` back to get the next page."""
     query = select(Story).where(
         Story.status == StoryStatus.PUBLISHED, Story.published_at.is_not(None)
     )
+    if curated is not None:
+        query = query.where(
+            Story.curated_at.is_not(None) if curated else Story.curated_at.is_(None)
+        )
     if cursor:
         published_at, story_id = _decode_cursor(cursor)
         query = query.where(tuple_(Story.published_at, Story.id) < (published_at, story_id))

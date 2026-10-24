@@ -19,18 +19,19 @@ const badgeTone: Record<CategoryValue, 'terracotta' | 'gold' | 'teal'> = {
 
 export default function HomePage() {
   const feed = useApi(() => getFeed({ limit: 50 }), [])
+  const museum = useApi(() => getFeed({ curated: true, limit: 50 }), [])
   const pins = useApi(getPins, [])
   const places = useApi(getPlaces, [])
 
   const stories = feed.data?.items ?? []
-  // Curated stories lead "Voice of the Week"; newer stories fill any gap.
-  const featured = [...stories.filter((s) => s.curated), ...stories.filter((s) => !s.curated)].slice(0, 3)
+  // The featured row is the museum: stories staff have curated, newest first.
+  const featured = (museum.data?.items ?? []).slice(0, 3)
   const recentCount = (pins.data ?? []).filter((p) => p.kind === 'recent').length
   const hero = findPhoto(places.data, 'petra-treasury-hero') ?? places.data?.[0]?.cover
   const stats = [
     { label: 'Stories told', value: stories.length || '…' },
     { label: 'Places', value: places.data?.length || '…' },
-    { label: 'In the museum', value: feed.data ? stories.filter((s) => s.curated).length : '…' },
+    { label: 'In the museum', value: museum.data ? museum.data.items.length : '…' },
   ]
 
   return (
@@ -99,7 +100,12 @@ export default function HomePage() {
           </Link>
         </div>
 
-        {feed.error && <p className="text-sm text-terracotta-dark">{feed.error}</p>}
+        {museum.error && <p className="text-sm text-terracotta-dark">{museum.error}</p>}
+        {museum.data && featured.length === 0 && (
+          <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted2">
+            No stories are in the museum yet. <Link to="/explore" className="text-terracotta hover:underline">Explore all stories</Link>
+          </p>
+        )}
         <div className="grid gap-5 md:grid-cols-3">
           {featured.map((s) => (
             <Card key={s.id} className="h-full overflow-hidden transition-shadow hover:shadow-md">

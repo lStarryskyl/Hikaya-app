@@ -12,7 +12,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
-import { Card, PillButton } from '../components/ui'
+import { Badge, Card, PillButton } from '../components/ui'
 import JordanMap, { type JordanMapHandle } from '../components/JordanMap'
 import Photo from '../components/Photo'
 import { getFeed, getPins } from '../discover'
@@ -20,10 +20,12 @@ import { CATEGORY_LABELS, formatDuration } from '../stories'
 import { toMapPins } from '../types'
 import { useApi } from '../useApi'
 
-const filters = ['All Stories', 'Ancient History', 'Oral Folklore', 'Crafts & Daily Life'] as const
+const filters = ['All Stories', 'Museum', 'Ancient History', 'Oral Folklore', 'Crafts & Daily Life'] as const
 
-function matchesFilter(category: string | null, filter: string) {
+function matchesFilter({ category, curated }: { category: string | null; curated: boolean }, filter: string) {
   if (filter === 'All Stories') return true
+  // The museum is the stories staff have curated.
+  if (filter === 'Museum') return curated
   if (filter === 'Ancient History') return category === 'history'
   if (filter === 'Oral Folklore') return category === 'folklore'
   if (filter === 'Crafts & Daily Life') return category === 'crafts' || category === 'daily_life'
@@ -44,7 +46,7 @@ export default function ExploreMapPage() {
   const results = useMemo(() => {
     const q = query.trim().toLowerCase()
     return stories.filter((s) => {
-      if (!matchesFilter(s.category, activeFilter)) return false
+      if (!matchesFilter(s, activeFilter)) return false
       if (!q) return true
       return (
         s.title.toLowerCase().includes(q) ||
@@ -131,6 +133,7 @@ export default function ExploreMapPage() {
                     <span className="flex items-center gap-1 text-[10px] text-muted">
                       <Clock size={10} /> {formatDuration(r.duration_ms)}
                     </span>
+                    {r.curated && <Badge tone="teal">Curated</Badge>}
                   </div>
                   <div className="truncate text-[13px] font-medium">{r.title}</div>
                   <div className="truncate text-[11px] text-muted">{r.excerpt}</div>

@@ -176,7 +176,15 @@ class Story(Base):
     cover_photo_slug: Mapped[str | None] = mapped_column(
         Text, ForeignKey("place_photos.slug", ondelete="SET NULL")
     )
+    # The museum: curated by staff, or set aside as "not now" so it leaves the candidates.
     curated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    curated_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    museum_dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    museum_dismissed_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
     # The rights statement version the author agreed to when submitting, and when.
     consent_version: Mapped[str | None] = mapped_column(Text)
     consented_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -457,3 +465,34 @@ class Narration(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class AuditAction(StrEnum):
+    APPROVE = "approve"
+    REJECT = "reject"
+    CURATE = "curate"
+    DISMISS = "dismiss"
+    UNCURATE = "uncurate"
+
+
+class AuditEvent(Base):
+    """A staff action: who did what to which target, and when. Never edited or deleted, and
+    kept when the target is deleted, so decisions can be checked afterwards."""
+
+    __tablename__ = "audit_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    action: Mapped[str] = mapped_column(Text, nullable=False)
+    target_type: Mapped[str] = mapped_column(Text, nullable=False)
+    target_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    detail: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.clock_timestamp()
+    )
+
+    __table_args__ = (Index("ix_audit_events_created_at", "created_at"),)

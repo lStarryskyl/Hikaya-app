@@ -10,6 +10,7 @@ import CommunityFeedPage from './pages/CommunityFeedPage'
 import ProfilePage from './pages/ProfilePage'
 import NotificationsPage from './pages/NotificationsPage'
 import SettingsPage from './pages/SettingsPage'
+import StaffPage from './pages/StaffPage'
 import { SignInPage, SignUpPage } from './pages/AuthPages'
 
 function Shell() {
@@ -35,6 +36,14 @@ function Shell() {
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="/notifications" element={<NotificationsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route
+              path="/staff"
+              element={
+                <RequireAuth>
+                  <StaffPage />
+                </RequireAuth>
+              }
+            />
           </Routes>
         </main>
       </div>

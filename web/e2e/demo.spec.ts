@@ -182,3 +182,86 @@ test('members cannot reach staff video or voice endpoints', async ({ page }) => 
   await page.goto('/staff')
   await expect(page.getByRole('heading', { name: 'Staff only' })).toBeVisible()
 })
+
+test('a member records, publishes, finds and plays a story', async ({ page }) => {
+  const title = `Lantern Evenings ${Date.now()}`
+  await page.goto('/signup?next=%2Fcreate')
+  await page.getByLabel('Your name').fill('Story Teller')
+  await page.getByLabel('Email', { exact: true }).fill(`teller-${Date.now()}@example.com`)
+  await page.getByLabel('Password', { exact: true }).fill('e2e-only-member-password')
+  await page.getByRole('button', { name: 'Create account', exact: true }).click()
+  await expect(page).toHaveURL(/\/create$/)
+
+  // Upload a recording; the fake providers transcribe, polish and translate it.
+  await page.getByLabel('Language you speak in the recording').selectOption('jordanian')
+  await page
+    .getByLabel('Upload an audio recording')
+    .setInputFiles(path.resolve('e2e/fixtures/voice.wav'))
+  const mine = async () => (await (await page.request.get('/api/v1/me/stories')).json())[0]
+  await expect.poll(async () => (await mine())?.id, { timeout: 30000 }).toBeTruthy()
+  const storyId: string = (await mine()).id
+  await expect
+    .poll(
+      async () =>
+        (await (await page.request.get(`/api/v1/stories/${storyId}/pipeline`)).json()).complete,
+      { timeout: 60000 },
+    )
+    .toBe(true)
+  await page.getByRole('button', { name: 'Continue', exact: true }).click()
+  await page.getByRole('button', { name: 'Continue', exact: true }).click()
+  await page.getByRole('button', { name: 'Skip photos' }).click()
+
+  // Details, a pin on the map, the rights statement, publish.
+  await page.getByLabel('Title').fill(title)
+  await page.getByLabel('Category').selectOption('folklore')
+  await page.getByLabel('Place').fill('Salt')
+  await page.locator('.maplibregl-canvas').click({ position: { x: 200, y: 110 } })
+  await expect(page.getByText(/Pinned at/)).toBeVisible()
+  await page.getByRole('checkbox').last().check()
+  await page.getByRole('button', { name: 'Publish story' }).click()
+  await expect(page).toHaveURL(new RegExp(`/story/${storyId}$`))
+  await expect
+    .poll(
+      async () => (await (await page.request.get(`/api/v1/stories/${storyId}`)).json()).status,
+      { timeout: 60000 },
+    )
+    .toBe('published')
+
+  // Visitors find it on the feed and on the map.
+  await page.goto('/feed')
+  await expect(page.getByRole('link', { name: `Open ${title}` })).toBeVisible()
+  await page.goto('/explore')
+  await expect(page.locator(`.hikaya-map-pin[aria-label="${title}"]`)).toHaveCount(1)
+
+  // The player plays the recording, then the narration made on submit.
+  await page.goto(`/story/${storyId}`)
+  await expect(page.getByRole('heading', { name: title })).toBeVisible()
+  await page.getByRole('button', { name: 'Play', exact: true }).click()
+  const audio = page.locator('audio').first()
+  await expect
+    .poll(() => audio.evaluate((element: HTMLAudioElement) => element.currentTime), {
+      timeout: 15000,
+    })
+    .toBeGreaterThan(0.5)
+  await page.getByRole('button', { name: 'Pause', exact: true }).click()
+  await expect
+    .poll(
+      async () => (await (await page.request.get(`/api/v1/stories/${storyId}`)).json()).narration,
+      { timeout: 60000 },
+    )
+    .toBeTruthy()
+  await page.reload()
+  await page.getByRole('radio', { name: 'Narration' }).click()
+  await page.getByRole('button', { name: 'Play', exact: true }).click()
+  await expect
+    .poll(
+      () =>
+        page
+          .locator('audio')
+          .first()
+          .evaluate((element: HTMLAudioElement) => !element.paused && element.currentTime > 0.3),
+      { timeout: 15000 },
+    )
+    .toBe(true)
+  await expect(page.locator('[aria-current="true"]').first()).toBeVisible()
+})

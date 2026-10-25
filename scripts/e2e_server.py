@@ -31,6 +31,8 @@ env = {
     "SEED_ADMIN_PASSWORD": "e2e-only-staff-password",
     "FAL_KEY": "",
     "ELEVENLABS_API_KEY": "",
+    "AZURE_OPENAI_API_KEY": "",
+    "AZURE_SPEECH_KEY": "",
     "HIGGSFIELD_KEY_ID": "",
     "HIGGSFIELD_KEY_SECRET": "",
     "GOOGLE_ACCESS_TOKEN": "",

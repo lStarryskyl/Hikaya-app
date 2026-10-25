@@ -191,14 +191,23 @@ async def video_media(
     )
 
 
+# Checking on a submitted video is its own short job: each check asks the provider once and,
+# while the video is still rendering, queues the next check a few seconds later. The worker
+# is never held while a provider renders, and no database connection is held during a call.
+POLL_KIND = "poll_video"
+
+
 @handler("generate_video")
 async def generate_job(payload: dict) -> dict:
+    generation_id = uuid.UUID(payload["generation_id"])
     async with get_sessionmaker()() as session:
-        generation = await find_generation(session, uuid.UUID(payload["generation_id"]))
-        adapter = provider(generation.provider)
+        generation = await find_generation(session, generation_id)
         if generation.file_key:
             return {"file_key": generation.file_key}
-        if not generation.provider_request:
+        if generation.provider_request:
+            # Already submitted (a retried job): never submit twice, just check on it.
+            deadline = _deadline()
+        else:
             settings = get_settings()
             if not settings.enable_ai_video or (
                 generation.provider != "fake" and not settings.live_ai_enabled
@@ -209,72 +218,113 @@ async def generate_job(payload: dict) -> dict:
                     "A video submission needs manual provider confirmation before retrying."
                 )
             arguments = {**generation.payload, "request_id": generation.input_hash[:26]}
-            if generation.image_key:
-                data = await asyncio.to_thread(get_storage().path(generation.image_key).read_bytes)
-                arguments["image_url"] = "data:image/webp;base64," + base64.b64encode(data).decode()
+            image_key, input_hash = generation.image_key, generation.input_hash
+            adapter = provider(generation.provider)
             generation.submitted = True
             generation.progress = "Submitting to provider"
             await session.commit()
+            if image_key:
+                data = await asyncio.to_thread(get_storage().path(image_key).read_bytes)
+                arguments["image_url"] = "data:image/webp;base64," + base64.b64encode(data).decode()
             try:
-                generation.provider_request = await gateway.call(
+                request = await gateway.call(
                     "video_submit",
                     adapter,
-                    (generation.input_hash,),
+                    (input_hash,),
                     6,
                     lambda: adapter.submit(arguments),
                     charge_on_failure=True,
                 )
-                await session.commit()
             except (httpx.HTTPError, ValueError, KeyError) as exc:
                 raise UserFacingError(
                     "Video submission could not be confirmed. "
                     "Check the provider before trying again."
                 ) from exc
-        free = FreeVideoRead(adapter.name)
-        # Stay below the worker's stale-job threshold. Unfinished remote jobs keep their ID.
-        until = datetime.now(UTC) + timedelta(seconds=480)
-        poll_number = 0
-        while datetime.now(UTC) < until:
-            poll_number += 1
-            try:
-                result = await gateway.call(
-                    "video_status",
-                    free,
-                    (str(generation.id), str(datetime.now(UTC).timestamp()), str(poll_number)),
-                    0,
-                    lambda: adapter.poll(generation.provider_request),
-                )
-            except (httpx.HTTPError, ValueError, KeyError) as exc:
-                raise UserFacingError(
-                    "Video status is unavailable. "
-                    "The provider request was saved; do not submit it again."
-                ) from exc
-            generation.progress = (
-                "Rendering video" if result["status"] == "running" else "Waiting for provider"
-            )
+            generation.provider_request = request
+            generation.progress = "Waiting for provider"
             await session.commit()
-            if result["status"] == "done":
+            deadline = _deadline()
+    return await _check(generation_id, 1, deadline)
 
-                async def download(url: str = result["video_url"]) -> tuple[dict, bytes]:
-                    return {}, await adapter.download(url)
 
-                _, cache_file = await gateway.call_file(
-                    "video_result",
-                    free,
-                    (generation.input_hash,),
-                    0,
-                    download,
-                    ".webm" if generation.provider == "fake" else ".mp4",
-                )
-                target = f"stories/{generation.story_id}/videos/{generation.id}/result" + (
-                    ".webm" if generation.provider == "fake" else ".mp4"
-                )
-                await asyncio.to_thread(get_storage().copy, cache_file, target)
-                generation.file_key = target
-                generation.progress = "Video ready"
-                await session.commit()
-                return {"file_key": target}
-            await asyncio.sleep(get_settings().video_poll_seconds)
+@handler(POLL_KIND)
+async def poll_job(payload: dict) -> dict:
+    return await _check(
+        uuid.UUID(payload["generation_id"]),
+        int(payload["number"]),
+        datetime.fromisoformat(payload["deadline"]),
+    )
+
+
+def _deadline() -> datetime:
+    return datetime.now(UTC) + timedelta(seconds=get_settings().video_max_wait_seconds)
+
+
+async def _check(generation_id: uuid.UUID, number: int, deadline: datetime) -> dict:
+    """Ask the provider once. Ready: store the video. Still rendering: queue the next check,
+    or give up once the maximum wait has passed (the request ID is kept for follow-up)."""
+    async with get_sessionmaker()() as session:
+        generation = await find_generation(session, generation_id)
+        if generation.file_key:
+            return {"file_key": generation.file_key}
+        name, request, input_hash = (
+            generation.provider,
+            generation.provider_request,
+            generation.input_hash,
+        )
+        story_id = generation.story_id
+    adapter = provider(name)
+    try:
+        # A status check costs nothing and its answer changes, so it is neither charged nor
+        # cached; only the finished video is.
+        result = await adapter.poll(request)
+        status = result["status"]
+    except (httpx.HTTPError, ValueError, KeyError):
+        status, result = "unavailable", {}
+
+    if status == "done":
+        free = FreeVideoRead(name)
+        extension = ".webm" if name == "fake" else ".mp4"
+
+        async def download(url: str = result["video_url"]) -> tuple[dict, bytes]:
+            return {}, await adapter.download(url)
+
+        _, cache_key = await gateway.call_file(
+            "video_result", free, (input_hash,), 0, download, extension
+        )
+        target = f"stories/{story_id}/videos/{generation_id}/result{extension}"
+        await asyncio.to_thread(get_storage().copy, cache_key, target)
+        async with get_sessionmaker()() as session:
+            generation = await find_generation(session, generation_id)
+            generation.file_key = target
+            generation.progress = "Video ready"
+            await session.commit()
+        return {"file_key": target, "checks": number}
+
+    if datetime.now(UTC) >= deadline:
         raise UserFacingError(
             "The provider is still processing. Its request ID was saved for staff follow-up."
         )
+    async with get_sessionmaker()() as session:
+        generation = await find_generation(session, generation_id)
+        generation.progress = {
+            "running": "Rendering video",
+            "unavailable": "Provider status unavailable; checking again",
+        }.get(status, "Waiting for provider")
+        job = await jobs.enqueue(
+            session,
+            POLL_KIND,
+            {
+                "generation_id": str(generation_id),
+                "number": number + 1,
+                "deadline": deadline.isoformat(),
+            },
+            idempotency_key=f"{POLL_KIND}:{generation_id}:{number + 1}",
+            # A failed check is not retried: the next one is already the retry.
+            max_attempts=1,
+            run_after=datetime.now(UTC) + timedelta(seconds=get_settings().video_poll_seconds),
+            commit=False,
+        )
+        generation.job_id = job.id  # the page follows the latest check
+        await session.commit()
+    return {"status": status, "check": number}

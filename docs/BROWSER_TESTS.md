@@ -15,8 +15,9 @@ npm run test:e2e
 
 Playwright starts the API, PostgreSQL-backed worker and Vite automatically on ports 8001 and 4173, then stops them. Use an empty disposable database for a clean run. Local reruns use unique test accounts and generation inputs. `npm run test:e2e:report` opens the HTML report.
 
-The three Chromium journeys cover:
+The four Chromium journeys cover:
 
+- The core demo path: signup, uploading a recording, waiting for transcription, polishing and translation, publishing with a map pin and the rights statement, finding the story on the feed and as a map pin, playing the recording, then playing the narration made on submit with its lines highlighted.
 - Home search, nearby permission granted, English/Arabic direction switching, signup, failed and successful dummy checkout, premium sample playback, staff consent and audio upload, queued fake voice cloning, queued fake video generation and playback.
 - Location permission denied while ordinary search remains usable, translated Arabic feed tabs, a 375-pixel viewport with no horizontal overflow, and an automated accessibility scan.
 - Anonymous and member access denied to staff voice/video endpoints, including attempts to supply a staff role during signup.

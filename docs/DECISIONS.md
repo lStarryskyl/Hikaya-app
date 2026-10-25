@@ -149,6 +149,10 @@ These exist on purpose while the build is in progress. Each closes with the tick
 
 - Staff AI video: submitting is one job; checking on the video is a separate short job that asks the provider once and, while it is still rendering, queues the next check `VIDEO_POLL_SECONDS` later. The worker is never held while a provider renders, so stories keep moving through transcription and narration. A status check costs nothing and is neither charged nor cached; only the finished video is cached. Checks stop after `VIDEO_MAX_WAIT_SECONDS` (30 minutes by default) and the provider's request ID is kept for follow-up. A check that cannot reach the provider simply tries again next time.
 
+## Search
+
+- Search matches a story's title, place, storyteller and every text layer in two ways at once: as a substring (so part of a name works) and with PostgreSQL full-text search in the built-in Arabic and English configurations (so other word forms work: حكاية finds الحكايات, "story" finds "stories"). The full-text expressions have GIN indexes (migration 0015) and are written to match them exactly. Broken plurals (فوانيس for فانوس) are beyond a light stemmer.
+
 ## Narration and slideshow
 
 - Narration starts when the member submits, alongside the moderation check, so reviewers hear held stories too and no voice credit goes on drafts. (The spec said "once the text is ready"; changed on 2026-10-23 with the owner's agreement.) The story is published without waiting for either; the player shows what exists, and the author and staff see their progress there, with a retry for a failed one in any status.

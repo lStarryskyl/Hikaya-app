@@ -223,3 +223,59 @@ async def test_category_tags_and_museum_filters_combine(client, session, author)
     body = (await client.get("/api/v1/stories", params=params)).json()
     assert [s["id"] for s in body["items"]] == [str(match.id)]
     assert body["items"][0]["tags"] == ["weaving", "تراث"]
+
+
+# --- full-text search (#15) ---
+
+
+async def add_layer(session, story, text, language="jordanian", kind="polished"):
+    session.add(
+        TextLayer(
+            story_id=story.id,
+            kind=kind,
+            language=language,
+            segments=[{"text": text, "start_ms": 0, "end_ms": 1000}],
+        )
+    )
+    await session.commit()
+
+
+async def search(client, q):
+    return [
+        s["title"] for s in (await client.get("/api/v1/stories", params={"q": q})).json()["items"]
+    ]
+
+
+async def test_an_arabic_story_is_found_by_an_inflected_form_of_its_words(client, session, author):
+    story = await add_story(session, author, "Old evenings", days_ago=1)
+    await add_layer(session, story, "كانت الحكايات تروى في الحارة")
+    await add_story(session, author, "Unrelated", days_ago=1)
+    # Singular for the plural in the text, and without the article: no substring matches.
+    assert await search(client, "حكاية") == ["Old evenings"]
+    assert await search(client, "حارة") == ["Old evenings"]
+
+
+async def test_an_english_story_is_found_by_another_form_of_its_words(client, session, author):
+    story = await add_story(session, author, "Lanterns", days_ago=1)
+    await add_layer(
+        session, story, "Grandmother told stories by the fire", "english", "translation_en"
+    )
+    assert await search(client, "story") == ["Lanterns"]
+    assert await search(client, "telling") == []  # different stem, not a match
+
+
+async def test_titles_and_places_are_searched_by_word_forms_too(client, session, author):
+    await add_story(session, author, "The old market", days_ago=1)
+    assert await search(client, "markets") == ["The old market"]
+
+
+async def test_full_text_search_has_indexes(session):
+    from sqlalchemy import text
+
+    names = set((await session.execute(text("SELECT indexname FROM pg_indexes"))).scalars().all())
+    assert {
+        "ix_stories_search_arabic",
+        "ix_stories_search_english",
+        "ix_text_layers_search_arabic",
+        "ix_text_layers_search_english",
+    } <= names

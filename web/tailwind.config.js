@@ -9,26 +9,26 @@ export default {
         border: '#E7E0D3',
         ink: '#241F1A',
         ink2: '#3E362C',
-        muted: '#8A8172',
+        muted: '#6D6457',
         muted2: '#6B6252',
         terracotta: {
-          DEFAULT: '#B85C38',
+          DEFAULT: '#9B4528',
           dark: '#8F3B1E',
           light: '#F3E2D6',
         },
         gold: {
-          DEFAULT: '#C08A2E',
+          DEFAULT: '#79530F',
           light: '#F1E5C9',
         },
         teal: {
-          DEFAULT: '#1F7A63',
+          DEFAULT: '#176650',
           light: '#DCEFE7',
         },
       },
       fontFamily: {
-        serif: ['Fraunces', 'ui-serif', 'Georgia', 'serif'],
-        sans: ['Manrope', 'system-ui', 'sans-serif'],
-        arabic: ['"Noto Kufi Arabic"', 'Manrope', 'sans-serif'],
+        serif: ['Fraunces Variable', 'ui-serif', 'Georgia', 'serif'],
+        sans: ['Manrope Variable', 'system-ui', 'sans-serif'],
+        arabic: ['"Noto Kufi Arabic Variable"', 'Manrope Variable', 'sans-serif'],
       },
       borderRadius: {
         xl2: '20px',

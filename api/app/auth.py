@@ -53,6 +53,7 @@ class UserOut(BaseModel):
     email: str
     display_name: str
     role: str
+    plan: str
 
 
 @cache

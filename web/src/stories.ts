@@ -1,3 +1,4 @@
+import { message, number } from './i18n'
 import { api } from './api'
 import type { Photo } from './discover'
 
@@ -21,7 +22,7 @@ export interface TextLayer {
 }
 
 export type StepName =
-  | 'transcribe' | 'polish' | 'translate_en' | 'translate_msa' | 'moderate' | 'narrate' | 'slideshow'
+  'transcribe' | 'polish' | 'translate_en' | 'translate_msa' | 'moderate' | 'narrate' | 'slideshow'
 
 export type NarrationSource = 'polished' | 'msa'
 
@@ -63,6 +64,7 @@ export interface ConsentStatement {
 }
 
 export interface StoryRecord {
+  tags: string[]
   id: string
   title: string
   category: CategoryValue | null
@@ -130,7 +132,14 @@ export const deleteStory = (id: string) => api<void>(`/stories/${id}`, { method:
 export type StoryFields = Partial<
   Pick<
     StoryRecord,
-    'title' | 'category' | 'place_name' | 'latitude' | 'longitude' | 'original_language' | 'narration_source'
+    | 'title'
+    | 'category'
+    | 'place_name'
+    | 'latitude'
+    | 'longitude'
+    | 'original_language'
+    | 'narration_source'
+    | 'tags'
   >
 >
 
@@ -196,11 +205,14 @@ export function isStoryId(id: string | undefined): id is string {
 export function formatDuration(ms: number | null): string {
   if (!ms) return ''
   const total = Math.round(ms / 1000)
-  return total < 60 ? `${total} sec` : `${Math.round(total / 60)} min`
+  return total < 60
+    ? message('{count} sec', { count: number(total) })
+    : message('{count} min', { count: number(Math.round(total / 60)) })
 }
 
 export const getStory = (id: string) => api<StoryRecord>(`/stories/${id}`)
-export const createStory = (fields: StoryFields = {}) => api<StoryRecord>('/stories', { body: fields })
+export const createStory = (fields: StoryFields = {}) =>
+  api<StoryRecord>('/stories', { body: fields })
 export const updateStory = (id: string, fields: StoryFields) =>
   api<StoryRecord>(`/stories/${id}`, { method: 'PATCH', body: fields })
 export const submitStory = (id: string, consentVersion: string) =>

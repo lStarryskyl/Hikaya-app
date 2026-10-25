@@ -1,0 +1,31 @@
+import { defineConfig, devices } from '@playwright/test'
+export default defineConfig({
+  testDir: './e2e',
+  timeout: 90000,
+  expect: { timeout: 15000 },
+  fullyParallel: false,
+  workers: 1,
+  forbidOnly: !!process.env.CI,
+  retries: process.env.CI ? 1 : 0,
+  reporter: [['list'], ['html', { open: 'never' }]],
+  use: {
+    baseURL: 'http://127.0.0.1:4173',
+    actionTimeout: 15000,
+    navigationTimeout: 15000,
+    trace: 'retain-on-failure',
+    screenshot: 'only-on-failure',
+    video: 'retain-on-failure',
+    geolocation: { latitude: 31.9539, longitude: 35.9106 },
+    permissions: ['geolocation'],
+  },
+  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  webServer: {
+    command: `"${process.env.HIKAYA_PYTHON ?? 'python'}" ../scripts/e2e_server.py`,
+    url: 'http://127.0.0.1:4173/api/v1/health',
+    timeout: 180000,
+    reuseExistingServer: false,
+    gracefulShutdown: { signal: 'SIGTERM', timeout: 5000 },
+    stdout: 'pipe',
+    stderr: 'pipe',
+  },
+})

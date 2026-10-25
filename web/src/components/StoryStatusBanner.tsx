@@ -1,3 +1,4 @@
+import { t, useLocale } from '../i18n'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { AlertTriangle, Clock, FilePen, Loader2 } from 'lucide-react'
@@ -18,6 +19,8 @@ export default function StoryStatusBanner({
   story: StoryRecord
   onChange: (story: StoryRecord) => void
 }) {
+  useLocale()
+
   // Set when the check itself failed (the provider was down, say): polling stops until a retry.
   const [failure, setFailure] = useState('')
   const [retrying, setRetrying] = useState(false)
@@ -56,7 +59,7 @@ export default function StoryStatusBanner({
       setFailure('')
       setRound((r) => r + 1)
     } catch (e) {
-      setFailure(e instanceof ApiError ? e.message : 'That did not work. Please try again.')
+      setFailure(e instanceof ApiError ? e.message : t('That did not work. Please try again.'))
     } finally {
       setRetrying(false)
     }
@@ -66,8 +69,11 @@ export default function StoryStatusBanner({
 
   const raised = story.moderation?.labels.filter((l) => l.raised) ?? []
   const editLink = (label: string) => (
-    <Link to={`/create?story=${story.id}`} className="font-semibold text-terracotta hover:underline">
-      {label}
+    <Link
+      to={`/create?story=${story.id}`}
+      className="font-semibold text-terracotta hover:underline"
+    >
+      {t(label)}
     </Link>
   )
 
@@ -77,7 +83,8 @@ export default function StoryStatusBanner({
       title: 'This story is a draft',
       body: (
         <>
-          Only you can see it. {editLink('Continue editing')}
+          {t('Only you can see it.')}
+          {editLink('Continue editing')}
         </>
       ),
     },
@@ -89,8 +96,13 @@ export default function StoryStatusBanner({
             <>
               <span role="alert">{failure}</span>
               <div className="mt-2">
-                <PillButton type="button" className="!py-1.5 text-xs" disabled={retrying} onClick={() => void retry()}>
-                  {retrying ? 'Trying again…' : 'Try again'}
+                <PillButton
+                  type="button"
+                  className="!py-1.5 text-xs"
+                  disabled={retrying}
+                  onClick={() => void retry()}
+                >
+                  {retrying ? t('Trying again…') : t('Try again')}
                 </PillButton>
               </div>
             </>
@@ -106,12 +118,12 @@ export default function StoryStatusBanner({
       title: 'Your story is under review',
       body: (
         <>
-          Our automatic check asked a reviewer to read it before it is published.
+          {t('Our automatic check asked a reviewer to read it before it is published.')}
           {raised.length > 0 && (
             <ul className="mt-2 list-disc ps-5">
               {raised.map((l) => (
                 <li key={l.label}>
-                  <span className="font-medium">{MODERATION_LABELS[l.label]}</span>
+                  <span className="font-medium">{t(MODERATION_LABELS[l.label])}</span>
                   {l.reason && `: ${l.reason}`}
                 </li>
               ))}
@@ -125,7 +137,11 @@ export default function StoryStatusBanner({
       title: 'A reviewer asked for changes',
       body: (
         <>
-          {story.review?.note ? <q className="block italic">{story.review.note}</q> : 'Please review your story.'}
+          {story.review?.note ? (
+            <q className="block italic">{story.review.note}</q>
+          ) : (
+            t('Please review your story.')
+          )}
           <div className="mt-2">{editLink('Edit and resubmit')}</div>
         </>
       ),
@@ -133,7 +149,10 @@ export default function StoryStatusBanner({
   }[story.status]
 
   return (
-    <div role="status" className="mb-5 flex gap-3 rounded-xl2 border border-gold/40 bg-gold-light/60 p-4 text-sm text-ink2">
+    <div
+      role="status"
+      className="mb-5 flex gap-3 rounded-xl2 border border-gold/40 bg-gold-light/60 p-4 text-sm text-ink2"
+    >
       <span className="mt-0.5 text-gold">{content.icon}</span>
       <div>
         <div className="font-semibold text-ink">{content.title}</div>

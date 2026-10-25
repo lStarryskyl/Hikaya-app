@@ -25,6 +25,8 @@ Open http://localhost:5173. The seven demo stories, their places and photos load
 
 ## Develop without Docker
 
+Browser verification is documented in [docs/BROWSER_TESTS.md](docs/BROWSER_TESTS.md).
+
 ```bash
 # API: needs PostgreSQL 16 with a `hikaya` database and the `hikaya` role from .env.example
 cd api && pip install -r requirements-dev.txt

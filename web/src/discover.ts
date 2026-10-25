@@ -1,3 +1,4 @@
+import { currentLocale, t } from './i18n'
 import { api } from './api'
 import type { CategoryValue } from './stories'
 
@@ -9,6 +10,8 @@ export interface Photo {
 }
 
 export interface StoryCard {
+  tags: string[]
+  distance_km: number | null
   id: string
   title: string
   category: CategoryValue | null
@@ -52,19 +55,46 @@ export interface Place {
   story_count: number
 }
 
+export interface DiscoveryFilters {
+  q?: string
+  category?: CategoryValue[]
+  tag?: string[]
+  curated?: boolean
+  latitude?: number
+  longitude?: number
+  radius_km?: number
+}
+
+export function discoveryParams(filters: DiscoveryFilters): URLSearchParams {
+  const params = new URLSearchParams()
+  if (filters.q?.trim()) params.set('q', filters.q.trim())
+  filters.category?.forEach((value) => params.append('category', value))
+  filters.tag?.forEach((value) => params.append('tag', value))
+  if (filters.curated) params.set('curated', 'true')
+  if (filters.latitude !== undefined && filters.longitude !== undefined) {
+    params.set('latitude', String(filters.latitude))
+    params.set('longitude', String(filters.longitude))
+    params.set('radius_km', String(filters.radius_km ?? 25))
+  }
+  return params
+}
+
 export function getFeed({
   limit = 12,
   cursor,
-  curated,
-}: { limit?: number; cursor?: string | null; curated?: boolean } = {}) {
-  const params = new URLSearchParams({ limit: String(limit) })
+  ...filters
+}: DiscoveryFilters & {
+  limit?: number
+  cursor?: string | null
+} = {}) {
+  const params = discoveryParams(filters)
+  params.set('limit', String(limit))
   if (cursor) params.set('cursor', cursor)
-  // Only stories in the museum.
-  if (curated) params.set('curated', 'true')
   return api<FeedPage>(`/stories?${params}`)
 }
 
-export const getPins = () => api<Pin[]>('/map/pins')
+export const getPins = (filters: DiscoveryFilters = {}) =>
+  api<Pin[]>(`/map/pins?${discoveryParams(filters)}`)
 
 // Places change only when the demo data is reloaded, so one request per page load is enough.
 let placesRequest: Promise<Place[]> | null = null
@@ -79,7 +109,9 @@ export function getPlaces(): Promise<Place[]> {
 /** The smallest stored width that is at least `width`, else the largest. */
 export function photoUrl(photo: Photo | null | undefined, width = 960): string | undefined {
   if (!photo) return undefined
-  const widths = Object.keys(photo.urls).map(Number).sort((a, b) => a - b)
+  const widths = Object.keys(photo.urls)
+    .map(Number)
+    .sort((a, b) => a - b)
   const pick = widths.find((w) => w >= width) ?? widths[widths.length - 1]
   return photo.urls[String(pick)]
 }
@@ -96,12 +128,11 @@ export function findPhoto(places: Place[] | null | undefined, slug: string): Pho
 
 export function timeAgo(iso: string | null, now = Date.now()): string {
   if (!iso) return ''
-  const minutes = Math.max(0, Math.round((now - new Date(iso).getTime()) / 60000))
-  if (minutes < 60) return minutes <= 1 ? 'just now' : `${minutes} min ago`
-  const hours = Math.round(minutes / 60)
-  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`
-  const days = Math.round(hours / 24)
-  if (days < 30) return `${days} day${days === 1 ? '' : 's'} ago`
-  const months = Math.round(days / 30)
-  return `${months} month${months === 1 ? '' : 's'} ago`
+  const seconds = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000))
+  const formatter = new Intl.RelativeTimeFormat(currentLocale(), { numeric: 'auto' })
+  if (seconds < 60) return t('just now')
+  if (seconds < 3600) return formatter.format(-Math.round(seconds / 60), 'minute')
+  if (seconds < 86400) return formatter.format(-Math.round(seconds / 3600), 'hour')
+  if (seconds < 2592000) return formatter.format(-Math.round(seconds / 86400), 'day')
+  return formatter.format(-Math.round(seconds / 2592000), 'month')
 }

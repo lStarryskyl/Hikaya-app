@@ -131,6 +131,7 @@ async def call(
     run: Callable[[], Awaitable[dict]],
     *,
     file_key: str | None = None,
+    charge_on_failure: bool = False,
 ) -> dict:
     """Run `run()` (which returns a JSON-able dict) at most once per input, within budget.
     `file_key` is for `call_file`."""
@@ -153,7 +154,13 @@ async def call(
     try:
         result = await run()
     except BaseException:
-        await _settle(entry_id, "released", None)
+        # An uncertain asynchronous submission may already be billed. Keep its estimate
+        # counted rather than releasing budget that could already have been spent.
+        await _settle(
+            entry_id,
+            "committed" if charge_on_failure else "released",
+            estimate if charge_on_failure else None,
+        )
         raise
     # Providers report no exact bill per call, so the estimate is recorded as the cost.
     await _settle(entry_id, "committed", estimate)

@@ -1,3 +1,4 @@
+import { t, useLocale, message } from '../i18n'
 import { useEffect, useRef, useState } from 'react'
 import { Mic, Pause, Play, RotateCcw, Square } from 'lucide-react'
 import { PillButton } from './ui'
@@ -20,14 +21,16 @@ const BARS = 15
 function microphoneMessage(error: unknown): string {
   const name = error instanceof DOMException ? error.name : ''
   if (name === 'NotAllowedError' || name === 'SecurityError')
-    return 'Microphone access is blocked. Allow it in your browser’s site settings, or upload a file instead.'
+    return t(
+      'Microphone access is blocked. Allow it in your browser’s site settings, or upload a file instead.',
+    )
   if (name === 'NotFoundError' || name === 'OverconstrainedError')
-    return 'No microphone was found. Connect one, or upload a recording instead.'
+    return t('No microphone was found. Connect one, or upload a recording instead.')
   if (name === 'NotSupportedError')
-    return 'Recording is not supported here. Upload a recording instead.'
+    return t('Recording is not supported here. Upload a recording instead.')
   if (name === 'NotReadableError')
-    return 'The microphone is in use by another app. Close it and try again.'
-  return 'The microphone could not be started. You can upload a recording instead.'
+    return t('The microphone is in use by another app. Close it and try again.')
+  return t('The microphone could not be started. You can upload a recording instead.')
 }
 
 type State = 'idle' | 'starting' | 'recording' | 'paused'
@@ -39,10 +42,14 @@ type State = 'idle' | 'starting' | 'recording' | 'paused'
 export default function Recorder({
   onRecorded,
   disabled = false,
+  maxSeconds,
 }: {
   onRecorded: (file: File) => void
   disabled?: boolean
+  maxSeconds?: number
 }) {
+  useLocale()
+
   const format = recordingFormat()
   const [state, setState] = useState<State>('idle')
   const [seconds, setSeconds] = useState(0)
@@ -84,6 +91,13 @@ export default function Recorder({
       stopEverything()
     }
   }, [])
+
+  useEffect(() => {
+    if (maxSeconds && seconds >= maxSeconds && state === 'recording') {
+      recorder.current?.stop()
+      setState('idle')
+    }
+  }, [maxSeconds, seconds, state])
 
   function meter(media: MediaStream) {
     const ctx = new AudioContext()
@@ -199,16 +213,16 @@ export default function Recorder({
       </div>
       <div className="mb-5 text-[11px] text-muted" role="status">
         {state === 'recording'
-          ? 'Recording…'
+          ? t('Recording…')
           : state === 'paused'
-            ? 'Paused'
+            ? t('Paused')
             : state === 'starting'
-              ? 'Opening the microphone…'
+              ? t('Opening the microphone…')
               : recordedAs
-                ? `Recorded as ${recordedAs}`
+                ? message('Recorded as {format}', { format: recordedAs })
                 : format
-                  ? `Records as ${format.label}`
-                  : 'Recording is not available in this browser'}
+                  ? message('Records as {format}', { format: format.label })
+                  : t('Recording is not available in this browser')}
       </div>
 
       {!live ? (
@@ -216,7 +230,7 @@ export default function Recorder({
           type="button"
           onClick={() => void start()}
           disabled={disabled || state === 'starting'}
-          aria-label="Start recording"
+          aria-label={t('Start recording')}
           className="flex h-16 w-16 items-center justify-center rounded-full bg-terracotta text-cream transition hover:brightness-105 disabled:opacity-50"
         >
           <Mic size={22} />
@@ -226,7 +240,7 @@ export default function Recorder({
           <button
             type="button"
             onClick={restart}
-            aria-label="Start again"
+            aria-label={t('Start again')}
             className="flex h-11 w-11 items-center justify-center rounded-full border border-border text-ink2 hover:bg-cream"
           >
             <RotateCcw size={16} />
@@ -234,20 +248,23 @@ export default function Recorder({
           <button
             type="button"
             onClick={state === 'recording' ? pause : resume}
-            aria-label={state === 'recording' ? 'Pause recording' : 'Resume recording'}
+            aria-label={state === 'recording' ? t('Pause recording') : t('Resume recording')}
             className="flex h-16 w-16 items-center justify-center rounded-full bg-terracotta-dark text-cream"
           >
             {state === 'recording' ? <Pause size={22} /> : <Play size={22} />}
           </button>
           <PillButton type="button" variant="teal" onClick={finish} className="!py-2.5">
-            <Square size={13} /> Finish
+            <Square size={13} /> {t('Finish')}
           </PillButton>
         </div>
       )}
 
       {error && (
-        <p role="alert" className="mt-4 max-w-sm rounded-lg bg-terracotta-light px-3 py-2 text-center text-sm text-terracotta-dark">
-          {error}
+        <p
+          role="alert"
+          className="mt-4 max-w-sm rounded-lg bg-terracotta-light px-3 py-2 text-center text-sm text-terracotta-dark"
+        >
+          {t(error)}
         </p>
       )}
     </div>

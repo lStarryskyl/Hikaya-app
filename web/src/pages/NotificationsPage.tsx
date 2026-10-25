@@ -1,9 +1,11 @@
+import { t, useLocale } from '../i18n'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Bell, Check, Heart, MapPin, MessageCircle, Mic, Trash2 } from 'lucide-react'
 import { Card, PillButton } from '../components/ui'
 import Photo from '../components/Photo'
 import { findPhoto, getPlaces } from '../discover'
+import Avatar from '../components/Avatar'
 import { mockAvatarUrl } from '../demo/mockEngagement'
 import { useApi } from '../useApi'
 
@@ -83,6 +85,8 @@ const iconFor: Record<NotifKind, typeof Heart> = {
 }
 
 export default function NotificationsPage() {
+  useLocale()
+
   // Notifications are mock in the demo: this list lives only in the page.
   const [items, setItems] = useState(INITIAL)
   const places = useApi(getPlaces, [])
@@ -104,17 +108,27 @@ export default function NotificationsPage() {
     <div className="mx-auto max-w-2xl space-y-5 px-4 py-6 sm:px-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="font-serif text-2xl">Notifications</h1>
+          <h1 className="font-serif text-2xl">{t('Notifications')}</h1>
           <p className="text-sm text-muted">
-            {unread > 0 ? `${unread} unread` : 'You’re all caught up'}
+            {unread > 0 ? `${unread} unread` : t('You’re all caught up')}
           </p>
         </div>
         <div className="flex gap-2">
-          <PillButton variant="outline" className="!py-2 text-xs" onClick={markAllRead} disabled={!unread}>
-            <Check size={13} /> Mark all read
+          <PillButton
+            variant="outline"
+            className="!py-2 text-xs"
+            onClick={markAllRead}
+            disabled={!unread}
+          >
+            <Check size={13} /> {t('Mark all read')}
           </PillButton>
-          <PillButton variant="ghost" className="!py-2 text-xs" onClick={clearAll} disabled={items.length === 0}>
-            <Trash2 size={13} /> Clear
+          <PillButton
+            variant="ghost"
+            className="!py-2 text-xs"
+            onClick={clearAll}
+            disabled={items.length === 0}
+          >
+            <Trash2 size={13} /> {t('Clear')}
           </PillButton>
         </div>
       </div>
@@ -122,10 +136,12 @@ export default function NotificationsPage() {
       {items.length === 0 ? (
         <Card className="px-6 py-16 text-center">
           <Bell size={28} className="mx-auto mb-3 text-muted" />
-          <p className="font-serif text-lg">No notifications</p>
-          <p className="mt-1 text-sm text-muted">Likes, comments, and nearby stories will show up here.</p>
+          <p className="font-serif text-lg">{t('No notifications')}</p>
+          <p className="mt-1 text-sm text-muted">
+            {t('Likes, comments, and nearby stories will show up here.')}
+          </p>
           <Link to="/feed" className="mt-4 inline-block text-sm font-medium text-terracotta">
-            Browse the feed
+            {t('Browse the feed')}
           </Link>
         </Card>
       ) : (
@@ -139,10 +155,10 @@ export default function NotificationsPage() {
                 }`}
               >
                 {n.avatarSeed ? (
-                  <img
+                  <Avatar
                     src={mockAvatarUrl(n.avatarSeed, 80)}
-                    alt=""
-                    className="h-11 w-11 shrink-0 rounded-full object-cover"
+                    name={n.title}
+                    className="h-11 w-11"
                   />
                 ) : n.imageSeed ? (
                   <Photo
@@ -157,12 +173,12 @@ export default function NotificationsPage() {
                 )}
                 <div className="min-w-0 flex-1">
                   <div className="flex items-start justify-between gap-2">
-                    <p className="text-sm font-semibold text-ink">{n.title}</p>
+                    <p className="text-sm font-semibold text-ink">{t(n.title)}</p>
                     {n.unread && (
                       <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-terracotta" />
                     )}
                   </div>
-                  <p className="mt-0.5 text-[13px] leading-snug text-muted2">{n.body}</p>
+                  <p className="mt-0.5 text-[13px] leading-snug text-muted2">{t(n.body)}</p>
                   <p className="mt-1.5 text-[11px] text-muted">{n.timeAgo}</p>
                 </div>
               </Card>
@@ -184,7 +200,7 @@ export default function NotificationsPage() {
               <button
                 key={n.id}
                 type="button"
-                className="block w-full text-left"
+                className="block w-full text-start"
                 onClick={() => markRead(n.id)}
               >
                 {inner}

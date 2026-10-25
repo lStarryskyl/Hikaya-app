@@ -27,7 +27,6 @@ export function useApi<T>(load: () => Promise<T>, deps: unknown[]) {
     return () => {
       current = false
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps)
   return state
 }

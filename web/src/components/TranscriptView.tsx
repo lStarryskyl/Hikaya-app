@@ -1,5 +1,13 @@
+import { t, useLocale, message } from '../i18n'
 import { useEffect, useRef, useState } from 'react'
-import { LAYER_LABELS, textDirection, textFont, timestamp, type LayerKind, type TextLayer } from '../stories'
+import {
+  LAYER_LABELS,
+  textDirection,
+  textFont,
+  timestamp,
+  type LayerKind,
+  type TextLayer,
+} from '../stories'
 
 /**
  * The player's transcript: pick a version, follow along as the line being spoken is
@@ -20,6 +28,8 @@ export default function TranscriptView({
   following: boolean
   onSeek: (ms: number) => void
 }) {
+  useLocale()
+
   const [kind, setKind] = useState<LayerKind>(
     layers.some((l) => l.kind === 'polished') ? 'polished' : layers[0].kind,
   )
@@ -42,7 +52,11 @@ export default function TranscriptView({
   const direction = textDirection(layer.language)
   return (
     <div className="mb-4">
-      <div className="mb-3 flex flex-wrap gap-1.5" role="tablist" aria-label="Transcript language">
+      <div
+        className="mb-3 flex flex-wrap gap-1.5"
+        role="tablist"
+        aria-label={t('Transcript language')}
+      >
         {layers.map((l) => (
           <button
             key={l.kind}
@@ -51,14 +65,19 @@ export default function TranscriptView({
             aria-selected={l.kind === layer.kind}
             onClick={() => setKind(l.kind)}
             className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-              l.kind === layer.kind ? 'bg-terracotta text-cream' : 'bg-cream text-muted2 hover:bg-border'
+              l.kind === layer.kind
+                ? 'bg-terracotta text-cream'
+                : 'bg-cream text-muted2 hover:bg-border'
             }`}
           >
-            {LAYER_LABELS[l.kind]}
+            {t(LAYER_LABELS[l.kind])}
           </button>
         ))}
       </div>
-      <div ref={listRef} className="relative max-h-[420px] space-y-1.5 overflow-y-auto pe-1 scrollbar-thin">
+      <div
+        ref={listRef}
+        className="relative max-h-[420px] space-y-1.5 overflow-y-auto pe-1 scrollbar-thin"
+      >
         {layer.segments.map((seg, i) => {
           const active = i === activeIndex
           const startMs = times[i].start_ms
@@ -69,14 +88,16 @@ export default function TranscriptView({
               type="button"
               onClick={() => onSeek(startMs)}
               aria-current={active ? 'true' : undefined}
-              aria-label={`Play from ${timestamp(startMs)}`}
+              aria-label={message('Play from {time}', { time: timestamp(startMs) })}
               className={`block w-full rounded-lg p-3 text-start text-[12.5px] leading-relaxed transition ${
                 active
                   ? 'border-s-2 border-terracotta bg-terracotta-light text-ink2'
                   : 'text-muted2 hover:bg-cream'
               }`}
             >
-              <span className="me-2 font-mono text-[10px] text-terracotta">{timestamp(startMs)}</span>
+              <span className="me-2 font-mono text-[10px] text-terracotta">
+                {timestamp(startMs)}
+              </span>
               <span {...direction} className={`${textFont(layer.language)} block`}>
                 {seg.text}
               </span>

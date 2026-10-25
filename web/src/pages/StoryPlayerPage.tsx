@@ -1,7 +1,17 @@
+import { captions } from '../captions'
+import { t, useLocale } from '../i18n'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
-  Bookmark, ChevronRight, Heart, Pause, Play, RotateCcw, RotateCw, Share2, Volume2,
+  Bookmark,
+  ChevronRight,
+  Heart,
+  Pause,
+  Play,
+  RotateCcw,
+  RotateCw,
+  Share2,
+  Volume2,
 } from 'lucide-react'
 import { Badge, Card, PillButton } from '../components/ui'
 import TranscriptView from '../components/TranscriptView'
@@ -11,9 +21,16 @@ import { ApiError } from '../api'
 import { initials } from '../auth'
 import Photo from '../components/Photo'
 import { getFeed, getPlaces, type Photo as PhotoData } from '../discover'
+import Avatar from '../components/Avatar'
 import { engagementFor, mockAvatarUrl, sampleReflections } from '../demo/mockEngagement'
 import {
-  CATEGORY_LABELS, LANGUAGE_LABELS, LAYER_LABELS, formatDuration, getStory, isStoryId, type StoryRecord,
+  CATEGORY_LABELS,
+  LANGUAGE_LABELS,
+  LAYER_LABELS,
+  formatDuration,
+  getStory,
+  isStoryId,
+  type StoryRecord,
   type TextLayer,
 } from '../stories'
 import { useApi } from '../useApi'
@@ -68,9 +85,15 @@ function fmt(s: number) {
   return `${m}:${sec}`
 }
 
-type Load = { state: 'loading' } | { state: 'missing' } | { state: 'error'; message: string } | { state: 'ready'; story: PlayerStory }
+type Load =
+  | { state: 'loading' }
+  | { state: 'missing' }
+  | { state: 'error'; message: string }
+  | { state: 'ready'; story: PlayerStory }
 
 export default function StoryPlayerPage() {
+  useLocale()
+
   const { id } = useParams()
   const [load, setLoad] = useState<Load>({ state: 'loading' })
   const onStoryChange = useCallback(
@@ -90,7 +113,11 @@ export default function StoryPlayerPage() {
       .catch((e) => {
         if (cancelled) return
         if (e instanceof ApiError && e.status === 404) setLoad({ state: 'missing' })
-        else setLoad({ state: 'error', message: e instanceof Error ? e.message : 'Could not load the story.' })
+        else
+          setLoad({
+            state: 'error',
+            message: e instanceof Error ? e.message : t('Could not load the story.'),
+          })
       })
     return () => {
       cancelled = true
@@ -98,21 +125,21 @@ export default function StoryPlayerPage() {
   }, [id])
 
   if (load.state === 'loading') {
-    return <div className="p-12 text-center text-sm text-muted">Loading story…</div>
+    return <div className="p-12 text-center text-sm text-muted">{t('Loading story…')}</div>
   }
   if (load.state === 'missing' || load.state === 'error') {
     return (
       <div className="mx-auto max-w-md p-12 text-center">
         <h1 className="mb-2 font-serif text-2xl">
-          {load.state === 'missing' ? 'Story not found' : 'Something went wrong'}
+          {load.state === 'missing' ? t('Story not found') : t('Something went wrong')}
         </h1>
         <p className="mb-6 text-sm text-muted2">
           {load.state === 'missing'
-            ? 'This story does not exist, or it is not published yet.'
+            ? t('This story does not exist, or it is not published yet.')
             : load.message}
         </p>
         <Link to="/explore" className="text-sm font-medium text-terracotta hover:underline">
-          Explore other stories
+          {t('Explore other stories')}
         </Link>
       </div>
     )
@@ -128,10 +155,14 @@ function Player({
   story: PlayerStory
   onStoryChange: (record: StoryRecord) => void
 }) {
+  useLocale()
+
   const audioRef = useRef<HTMLAudioElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   // Listen to the storyteller's own recording, or to the narration of the text.
-  const [mode, setMode] = useState<'original' | 'narrated'>(story.audioUrl ? 'original' : 'narrated')
+  const [mode, setMode] = useState<'original' | 'narrated'>(
+    story.audioUrl ? 'original' : 'narrated',
+  )
   // After switching, continue at the same line in the other track.
   const resumeAt = useRef<{ seconds: number; play: boolean } | null>(null)
   // The slideshow carries the narration, so while it plays the lines follow its timings.
@@ -222,21 +253,38 @@ function Player({
             }
           }}
           onError={() => setAudioError(true)}
-        />
+        >
+          <track
+            kind="captions"
+            srcLang={story.record.original_language === 'english' ? 'en' : 'ar'}
+            label={t('Transcript')}
+            src={captions(
+              mode === 'narrated'
+                ? story.narration?.segments
+                : story.layers.find((layer) => layer.kind === 'verbatim')?.segments,
+            )}
+          />
+        </audio>
       )}
 
       <div className="flex items-center justify-between mb-4 text-sm">
         <div className="text-muted flex items-center gap-1.5">
-          <Link to="/">Home</Link> <ChevronRight size={13} /> <Link to="/explore">Explore</Link> <ChevronRight size={13} /> <span className="text-ink">Story Player</span>
+          <Link to="/">{t('Home')}</Link> <ChevronRight className="rtl:rotate-180" size={13} />{' '}
+          <Link to="/explore">{t('Explore')}</Link>{' '}
+          <ChevronRight className="rtl:rotate-180" size={13} />{' '}
+          <span className="text-ink">{t('Story Player')}</span>
         </div>
         <div className="flex items-center gap-2">
-          <PillButton variant="outline" className="!py-1.5 !px-3 text-xs"><Share2 size={13} /> Share</PillButton>
+          <PillButton variant="outline" className="!py-1.5 !px-3 text-xs">
+            <Share2 size={13} /> {t('Share')}
+          </PillButton>
           <button
             onClick={() => setSaved((s) => !s)}
             aria-pressed={saved}
             className={`text-xs px-3 py-1.5 rounded-full border flex items-center gap-1.5 ${saved ? 'bg-terracotta-light text-terracotta-dark border-terracotta-light' : 'border-border text-muted2'}`}
           >
-            <Bookmark size={13} fill={saved ? 'currentColor' : 'none'} /> {saved ? 'Saved' : 'Save'}
+            <Bookmark size={13} fill={saved ? 'currentColor' : 'none'} />{' '}
+            {saved ? t('Saved') : t('Save')}
           </button>
         </div>
       </div>
@@ -247,16 +295,23 @@ function Player({
       <div className="grid lg:grid-cols-[minmax(0,1fr)_340px] gap-6">
         <div>
           <div className="relative h-72 rounded-xl2 overflow-hidden mb-4">
-            <Photo photo={story.cover} width={1000} sizes="(min-width: 1024px) 760px, 100vw" className="w-full h-full object-cover" />
+            <Photo
+              photo={story.cover}
+              width={1000}
+              sizes="(min-width: 1024px) 760px, 100vw"
+              className="w-full h-full object-cover"
+            />
             <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
-            <div className="absolute top-4 left-4 flex gap-2">
+            <div className="absolute top-4 start-4 flex gap-2">
               {story.category && <Badge tone="terracotta">{story.category}</Badge>}
-              {story.curated && <Badge tone="teal">Curated</Badge>}
+              {story.curated && <Badge tone="teal">{t('Curated')}</Badge>}
             </div>
-            <div className="absolute bottom-4 left-4 text-cream">
+            <div className="absolute bottom-4 start-4 text-cream">
               <h1 className="font-serif text-2xl">{story.title}</h1>
               <div className="text-xs text-cream/80 mt-1">
-                {[story.durationLabel, story.place && `${story.place}, Jordan`].filter(Boolean).join(' · ')}
+                {[story.durationLabel, story.place && `${story.place}, Jordan`]
+                  .filter(Boolean)
+                  .join(' · ')}
               </div>
             </div>
           </div>
@@ -265,7 +320,11 @@ function Player({
           <Card className="p-4 mb-6">
             {story.narration && story.audioUrl && (
               <div className="mb-3 flex justify-center">
-                <div role="radiogroup" aria-label="What to listen to" className="inline-flex rounded-full bg-cream p-1 text-xs">
+                <div
+                  role="radiogroup"
+                  aria-label={t('What to listen to')}
+                  className="inline-flex rounded-full bg-cream p-1 text-xs"
+                >
                   {(['original', 'narrated'] as const).map((m) => (
                     <button
                       key={m}
@@ -275,7 +334,7 @@ function Player({
                       onClick={() => switchTo(m)}
                       className={`rounded-full px-3 py-1 font-medium ${mode === m ? 'bg-terracotta text-cream' : 'text-muted2'}`}
                     >
-                      {m === 'original' ? 'Storyteller' : 'Narration'}
+                      {m === 'original' ? t('Storyteller') : t('Narration')}
                     </button>
                   ))}
                 </div>
@@ -286,7 +345,7 @@ function Player({
               <div
                 role="slider"
                 tabIndex={canPlay ? 0 : -1}
-                aria-label="Playback position"
+                aria-label={t('Playback position')}
                 aria-valuemin={0}
                 aria-valuemax={Math.round(duration)}
                 aria-valuenow={Math.round(elapsed)}
@@ -301,29 +360,44 @@ function Player({
                 }}
                 className={`flex-1 h-1.5 bg-border rounded-full overflow-hidden ${canPlay ? 'cursor-pointer' : ''}`}
               >
-                <div className="h-full bg-gradient-to-r from-terracotta to-gold" style={{ width: `${progress}%` }} />
+                <div
+                  className="h-full bg-gradient-to-r from-terracotta to-gold"
+                  style={{ width: `${progress}%` }}
+                />
               </div>
-              <span className="text-[11px] text-muted w-10 text-right">{fmt(duration)}</span>
+              <span className="text-[11px] text-muted w-10 text-end">{fmt(duration)}</span>
             </div>
             <div className="flex items-center justify-center gap-6 text-muted2">
-              <button type="button" aria-label="Back 15 seconds" disabled={!canPlay} onClick={() => seekTo(elapsed - 15)} className="disabled:opacity-40">
+              <button
+                type="button"
+                aria-label={t('Back 15 seconds')}
+                disabled={!canPlay}
+                onClick={() => seekTo(elapsed - 15)}
+                className="disabled:opacity-40"
+              >
                 <RotateCcw size={18} />
               </button>
               <button
                 type="button"
                 onClick={togglePlay}
                 disabled={!canPlay}
-                aria-label={playing ? 'Pause' : 'Play'}
+                aria-label={playing ? t('Pause') : t('Play')}
                 className="w-11 h-11 rounded-full bg-terracotta text-cream flex items-center justify-center disabled:opacity-50"
               >
                 {playing ? <Pause size={18} /> : <Play size={18} />}
               </button>
-              <button type="button" aria-label="Forward 15 seconds" disabled={!canPlay} onClick={() => seekTo(elapsed + 15)} className="disabled:opacity-40">
+              <button
+                type="button"
+                aria-label={t('Forward 15 seconds')}
+                disabled={!canPlay}
+                onClick={() => seekTo(elapsed + 15)}
+                className="disabled:opacity-40"
+              >
                 <RotateCw size={18} />
               </button>
-              <label className="flex items-center gap-1.5 ml-4">
+              <label className="flex items-center gap-1.5 ms-4">
                 <Volume2 size={15} aria-hidden />
-                <span className="sr-only">Volume</span>
+                <span className="sr-only">{t('Volume')}</span>
                 <input
                   type="range"
                   min={0}
@@ -337,21 +411,27 @@ function Player({
             </div>
             {mode === 'narrated' && story.narration && (
               <p className="mt-3 text-center text-[11px] text-muted">
-                A voice reads the {LAYER_LABELS[story.narration.source === 'msa' ? 'translation_msa' : 'polished']} text.
+                {t('A voice reads the')}
+                {t(
+                  LAYER_LABELS[story.narration.source === 'msa' ? 'translation_msa' : 'polished'],
+                )}{' '}
+                {t('text.')}
               </p>
             )}
             {!canPlay && (
               <p className="mt-3 text-center text-[11px] text-muted">
                 {audioError
-                  ? 'The recording could not be played.'
-                  : 'This demo story has text only; its recording has not been added.'}
+                  ? t('The recording could not be played.')
+                  : t('This demo story has text only; its recording has not been added.')}
               </p>
             )}
           </Card>
 
           {story.slideshow && (
             <div className="mb-6">
-              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Slideshow</div>
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
+                {t('Slideshow')}
+              </div>
               <video
                 ref={videoRef}
                 src={story.slideshow.url}
@@ -366,15 +446,23 @@ function Player({
                 onEnded={() => setVideoPlaying(false)}
                 onTimeUpdate={(e) => setVideoTime(e.currentTarget.currentTime)}
                 className="aspect-video w-full rounded-xl2 bg-black"
-                aria-label={`Slideshow of ${story.title}`}
-              />
+                aria-label={`${t('Slideshow')}: ${story.title}`}
+              >
+                <track
+                  kind="captions"
+                  srcLang={story.narration?.language === 'english' ? 'en' : 'ar'}
+                  label={t('Transcript')}
+                  src={captions(story.narration?.segments)}
+                  default
+                />
+              </video>
             </div>
           )}
 
           {gallery.length > 0 && (
             <div className="mb-6">
               <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
-                {story.photos.length ? 'Photos' : `${story.place} gallery`}
+                {story.photos.length ? t('Photos') : `${story.place} gallery`}
               </div>
               <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-thin">
                 {gallery.map((photo) => (
@@ -392,12 +480,35 @@ function Player({
 
           <div className="grid md:grid-cols-2 gap-5 mb-8">
             <Card className="p-5">
-              <div className="font-serif text-base mb-2">About this story</div>
+              <div className="font-serif text-base mb-2">{t('About this story')}</div>
               <dl className="space-y-1.5 text-sm text-muted2">
-                {story.category && <div><dt className="inline font-medium text-ink2">Category: </dt><dd className="inline">{story.category}</dd></div>}
-                {story.place && <div><dt className="inline font-medium text-ink2">Place: </dt><dd className="inline">{story.place}, Jordan</dd></div>}
-                {story.languageLabel && <div><dt className="inline font-medium text-ink2">Told in: </dt><dd className="inline">{story.languageLabel}</dd></div>}
-                {story.durationLabel && <div><dt className="inline font-medium text-ink2">Length: </dt><dd className="inline">{story.durationLabel}</dd></div>}
+                {story.category && (
+                  <div>
+                    <dt className="inline font-medium text-ink2">{t('Category:')} </dt>
+                    <dd className="inline">{story.category}</dd>
+                  </div>
+                )}
+                {story.place && (
+                  <div>
+                    <dt className="inline font-medium text-ink2">{t('Place:')} </dt>
+                    <dd className="inline">
+                      {story.place}
+                      {t(', Jordan')}
+                    </dd>
+                  </div>
+                )}
+                {story.languageLabel && (
+                  <div>
+                    <dt className="inline font-medium text-ink2">{t('Told in:')} </dt>
+                    <dd className="inline">{story.languageLabel}</dd>
+                  </div>
+                )}
+                {story.durationLabel && (
+                  <div>
+                    <dt className="inline font-medium text-ink2">{t('Length:')} </dt>
+                    <dd className="inline">{story.durationLabel}</dd>
+                  </div>
+                )}
               </dl>
             </Card>
             <Card className="p-5">
@@ -407,7 +518,7 @@ function Player({
                 </span>
                 <div>
                   <div className="text-sm font-semibold">{story.narrator}</div>
-                  <div className="text-[11px] text-terracotta">Storyteller</div>
+                  <div className="text-[11px] text-terracotta">{t('Storyteller')}</div>
                 </div>
               </div>
             </Card>
@@ -415,13 +526,13 @@ function Player({
 
           {/* community reflections: mock (see demo/mockEngagement) */}
           <div className="flex items-center justify-between mb-4">
-            <h2 className="font-serif text-xl">Community Reflections</h2>
+            <h2 className="font-serif text-xl">{t('Community Reflections')}</h2>
           </div>
           <div className="grid md:grid-cols-3 gap-4">
             {sampleReflections.map((c) => (
               <Card key={c.name} className="p-4">
                 <div className="flex items-center gap-2 mb-2">
-                  <img src={mockAvatarUrl(c.avatarSeed, 60)} className="w-8 h-8 rounded-full object-cover" alt="" />
+                  <Avatar src={mockAvatarUrl(c.avatarSeed, 60)} name={c.name} className="h-8 w-8" />
                   <div>
                     <div className="text-[12px] font-semibold">{c.name}</div>
                     <div className="text-[10px] text-muted">{c.timeAgo}</div>
@@ -429,7 +540,9 @@ function Player({
                 </div>
                 <p className="text-[12.5px] italic text-ink2 mb-3">"{c.text}"</p>
                 <div className="flex items-center gap-4 text-[11px] text-muted">
-                  <span className="flex items-center gap-1"><Heart size={11} /> {c.likes}</span>
+                  <span className="flex items-center gap-1">
+                    <Heart size={11} /> {c.likes}
+                  </span>
                 </div>
               </Card>
             ))}
@@ -440,15 +553,15 @@ function Player({
         <div>
           <Card className="p-1 mb-4">
             <div className="flex" role="tablist">
-              {(['transcript', 'accessibility'] as const).map((t) => (
+              {(['transcript', 'accessibility'] as const).map((tabName) => (
                 <button
-                  key={t}
+                  key={t(tabName === 'transcript' ? 'Transcript' : 'Accessibility')}
                   role="tab"
-                  aria-selected={tab === t}
-                  onClick={() => setTab(t)}
-                  className={`flex-1 text-xs font-medium py-2.5 rounded-lg capitalize ${tab === t ? 'bg-cream text-ink' : 'text-muted'}`}
+                  aria-selected={tab === tabName}
+                  onClick={() => setTab(tabName)}
+                  className={`flex-1 text-xs font-medium py-2.5 rounded-lg capitalize ${tab === tabName ? 'bg-cream text-ink' : 'text-muted'}`}
                 >
-                  {t}
+                  {t(tabName === 'transcript' ? 'Transcript' : 'Accessibility')}
                 </button>
               ))}
             </div>
@@ -472,36 +585,52 @@ function Player({
               />
             ) : (
               <Card className="p-4 mb-4 text-[13px] text-muted2 leading-relaxed">
-                The transcript and translations appear here once the story has been processed.
+                {t(
+                  'The transcript and translations appear here once the story has been processed.',
+                )}
               </Card>
             )
           ) : (
             <Card className="p-4 mb-4 text-[13px] text-muted2 leading-relaxed">
-              The player works with a keyboard and screen readers. The transcript, once ready, follows the recording line by line.
+              {t(
+                'The player works with a keyboard and screen readers. The transcript, once ready, follows the recording line by line.',
+              )}
             </Card>
           )}
 
           <div className="grid grid-cols-2 gap-3 mb-6">
             <Card className="p-3 text-center">
               <div className="font-serif text-lg">{mock.likes.toLocaleString()}</div>
-              <div className="text-[11px] text-muted">Likes</div>
+              <div className="text-[11px] text-muted">{t('Likes')}</div>
             </Card>
             <Card className="p-3 text-center">
               <div className="font-serif text-lg">{mock.comments}</div>
-              <div className="text-[11px] text-muted">Comments</div>
+              <div className="text-[11px] text-muted">{t('Comments')}</div>
             </Card>
           </div>
 
           <div className="flex items-center justify-between mb-3">
-            <div className="text-xs font-semibold uppercase tracking-wide text-muted">Up next</div>
+            <div className="text-xs font-semibold uppercase tracking-wide text-muted">
+              {t('Up next')}
+            </div>
           </div>
           <div className="space-y-2">
             {upNext.map((u) => (
-              <Link to={`/story/${u.id}`} key={u.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-cream">
-                <Photo photo={u.cover} width={88} className="w-11 h-11 shrink-0 rounded-md object-cover" />
+              <Link
+                to={`/story/${u.id}`}
+                key={u.id}
+                className="flex items-center gap-3 p-2 rounded-lg hover:bg-cream"
+              >
+                <Photo
+                  photo={u.cover}
+                  width={88}
+                  className="w-11 h-11 shrink-0 rounded-md object-cover"
+                />
                 <div className="min-w-0">
                   <div className="text-[12.5px] font-medium truncate">{u.title}</div>
-                  <div className="text-[11px] text-muted">{u.author.display_name} · {formatDuration(u.duration_ms)}</div>
+                  <div className="text-[11px] text-muted">
+                    {u.author.display_name} · {formatDuration(u.duration_ms)}
+                  </div>
                 </div>
               </Link>
             ))}
@@ -511,9 +640,13 @@ function Player({
 
       <footer className="mt-12 pt-5 border-t border-border flex flex-wrap justify-between gap-2 text-[11px] text-muted">
         <div className="flex gap-4">
-          <span>Privacy Policy</span><span>Usage Guidelines</span><span>Contact Archive</span>
+          <span>{t('Privacy Policy')}</span>
+          <span>{t('Usage Guidelines')}</span>
+          <span>{t('Contact Archive')}</span>
         </div>
-        <div>© {new Date().getFullYear()} Hikaya (حكاية) — Preserving Our Digital Silk Road.</div>
+        <div>
+          © {new Date().getFullYear()} {t('Hikaya (حكاية) — Preserving Our Digital Silk Road.')}
+        </div>
       </footer>
     </div>
   )

@@ -46,6 +46,31 @@ class Settings(BaseSettings):
     tts_provider: str = "fake"
     llm_provider: str = "fake"
     video_provider: str = "fal"
+    fal_key: str = ""
+    higgsfield_key_id: str = ""
+    higgsfield_key_secret: str = ""
+    higgsfield_media_hosts: list[str] = Field(
+        default_factory=lambda: [
+            "higgsfield.ai",
+            "amazonaws.com",
+            "cloudfront.net",
+            "storage.googleapis.com",
+        ]
+    )
+    google_cloud_project: str = Field("", pattern=r"^$|^[a-z][a-z0-9-]{4,62}[a-z0-9]$")
+    google_cloud_location: str = Field("us-central1", pattern=r"^[a-z0-9-]+$")
+    google_access_token: str = ""
+    custom_video_endpoint: str = ""
+    custom_video_token: str = ""
+    custom_video_estimate_usd: float = Field(0.0, ge=0)
+    video_estimate_usd: float = Field(1.0, ge=0)
+    video_poll_seconds: float = Field(3.0, ge=0.1, le=30)
+    voice_clone_provider: str = "fake"
+    elevenlabs_api_key: str = ""
+    # Conservative reservation, configurable for the account's plan.
+    voice_clone_estimate_usd: float = Field(1.0, ge=0)
+
+    dummy_checkout_seconds: float = Field(1.5, ge=0, le=10)
 
     # Safety switches
     live_ai_enabled: bool = False

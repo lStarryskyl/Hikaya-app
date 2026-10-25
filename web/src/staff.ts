@@ -58,12 +58,16 @@ export const AUDIT_LABELS: Record<AuditActionName, string> = {
 const story = (id: string, action: string) => `/staff/stories/${id}/${action}`
 
 export const getReviewPage = () => api<ReviewPage>('/staff/review')
-export const approveStory = (id: string) => api<ActionResult>(story(id, 'approve'), { method: 'POST' })
+export const approveStory = (id: string) =>
+  api<ActionResult>(story(id, 'approve'), { method: 'POST' })
 export const rejectStory = (id: string, note: string) =>
   api<ActionResult>(story(id, 'reject'), { method: 'POST', body: { note: note.trim() || null } })
-export const curateStory = (id: string) => api<ActionResult>(story(id, 'curate'), { method: 'POST' })
-export const dismissCandidate = (id: string) => api<ActionResult>(story(id, 'dismiss'), { method: 'POST' })
-export const uncurateStory = (id: string) => api<ActionResult>(story(id, 'curation'), { method: 'DELETE' })
+export const curateStory = (id: string) =>
+  api<ActionResult>(story(id, 'curate'), { method: 'POST' })
+export const dismissCandidate = (id: string) =>
+  api<ActionResult>(story(id, 'dismiss'), { method: 'POST' })
+export const uncurateStory = (id: string) =>
+  api<ActionResult>(story(id, 'curation'), { method: 'DELETE' })
 export const getAuditLog = () => api<AuditEntry[]>('/staff/audit')
 export const getSpend = () => api<SpendSummary>('/staff/spend')
 

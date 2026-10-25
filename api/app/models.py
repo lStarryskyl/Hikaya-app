@@ -20,7 +20,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -84,12 +84,14 @@ class User(Base):
     display_name: Mapped[str] = mapped_column(Text, nullable=False)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     role: Mapped[str] = mapped_column(Text, nullable=False, server_default=Role.MEMBER.value)
+    plan: Mapped[str] = mapped_column(Text, nullable=False, server_default="free")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
     __table_args__ = (
         CheckConstraint("email = lower(email)", name="ck_users_email_lowercase"),
+        CheckConstraint("plan IN ('free', 'premium')", name="ck_users_plan"),
         CheckConstraint("role IN ('member', 'reviewer', 'admin')", name="ck_users_role"),
     )
 
@@ -169,6 +171,9 @@ class Story(Base):
     longitude: Mapped[float | None] = mapped_column(Float)
     original_language: Mapped[str | None] = mapped_column(Text)
     duration_ms: Mapped[int | None] = mapped_column(Integer)
+    tags: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, server_default=text("'{}'::text[]")
+    )
     # The known place the story is pinned to, matched from place_name; null for other places.
     place_slug: Mapped[str | None] = mapped_column(
         Text, ForeignKey("places.slug", ondelete="SET NULL")
@@ -496,3 +501,79 @@ class AuditEvent(Base):
     )
 
     __table_args__ = (Index("ix_audit_events_created_at", "created_at"),)
+
+
+class VoiceClone(Base):
+    """An immutable speaker consent record and its private sample, with a queued clone job."""
+
+    __tablename__ = "voice_clones"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    actor_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    request_id: Mapped[str] = mapped_column(Text, nullable=False)
+    speaker_name: Mapped[str] = mapped_column(Text, nullable=False)
+    consent: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    sample_key: Mapped[str] = mapped_column(Text, nullable=False)
+    sample_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    provider_voice_id: Mapped[str | None] = mapped_column(Text)
+    requires_verification: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    submitted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    __table_args__ = (UniqueConstraint("actor_id", "request_id", name="uq_voice_request"),)
+
+
+class CheckoutAttempt(Base):
+    __tablename__ = "checkout_attempts"
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    request_id: Mapped[str] = mapped_column(Text, nullable=False)
+    scenario: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="processing")
+    complete_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    __table_args__ = (
+        UniqueConstraint("user_id", "request_id", name="uq_checkout_request"),
+        CheckConstraint(
+            "status IN ('processing', 'succeeded', 'failed')", name="ck_checkout_status"
+        ),
+        CheckConstraint("scenario IN ('success', 'failure')", name="ck_checkout_scenario"),
+    )
+
+
+class VideoGeneration(Base):
+    __tablename__ = "video_generations"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    story_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("stories.id", ondelete="CASCADE"), nullable=False
+    )
+    actor_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    input_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    image_key: Mapped[str | None] = mapped_column(Text)
+    provider_request: Mapped[dict | None] = mapped_column(JSONB)
+    submitted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    file_key: Mapped[str | None] = mapped_column(Text)
+    progress: Mapped[str] = mapped_column(Text, nullable=False, server_default="Queued locally")
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

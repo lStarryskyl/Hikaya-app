@@ -10,7 +10,7 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app import gateway, jobs, media, moderation, pipeline
+from app import gateway, jobs, media, moderation, pipeline, videos, voices
 from app.config import get_settings
 from app.db import dispose_engine, get_sessionmaker
 from app.errors import INTERNAL_PREFIX, UserFacingError
@@ -19,7 +19,7 @@ from app.handlers import HANDLERS, Handler
 log = logging.getLogger("hikaya.worker")
 
 # These modules register their job handlers when imported; keep the reference explicit.
-_REGISTERED_HANDLER_MODULES = (pipeline, moderation, media)
+_REGISTERED_HANDLER_MODULES = (pipeline, moderation, media, voices, videos)
 
 
 async def run_one(

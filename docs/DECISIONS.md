@@ -48,7 +48,7 @@ Mock means the screen works and shows plausible data but nothing is stored. Mock
 
 ## Languages
 
-Content: Jordanian dialect, Modern Standard Arabic (MSA), English. The interface is English for now, built with translation files and right-to-left support so Arabic can be added without a rewrite. Arabic story text displays right-to-left from day one.
+Content: Jordanian dialect, Modern Standard Arabic (MSA), English. The interface supports English and Arabic, with translation catalogues, a persisted language switch and document-level right-to-left layout. Story language stays independent of interface language. Arabic story text displays right-to-left from day one.
 
 Each story keeps three text layers: the verbatim transcript, a lightly polished version in the same language, and translations into English and MSA. Translation targets are never dialect. Narration reads the polished text; if the dialect wording sounds wrong, it falls back to MSA text read by a Jordanian-accent voice.
 
@@ -166,3 +166,59 @@ These exist on purpose while the build is in progress. Each closes with the tick
 ## Out of scope
 
 AI persona chat, reels, the 360 viewer, analytics dashboards, the visit planner (no document defines it), real payments, Google sign-in, TOTP, email verification, scaling.
+
+## Search and nearby discovery (#15)
+
+- Discovery filters run on the server across all published stories, never just a loaded page. Search is literal, case-insensitive substring matching over title, place, author and every text layer. No fuzzy search or extra index is needed for the demo dataset.
+- Story tags are trimmed, Unicode-normalized and lowercased; at most 10 distinct tags of 1 to 40 characters. Tags, category, museum and text filters combine. Existing stories have no tags.
+- Nearby uses the Haversine formula in PostgreSQL, with radius 1 to 500 km (default 25). Nearby results are nearest first; ordinary results newest first. Cursors are tied to the active filters.
+- Location is requested only after activating nearby discovery, held in memory and sent to the discovery API. It is not stored in the account, local storage or shareable URLs. Permission denial, timeout or unavailable location leave ordinary discovery available.
+
+## Interface language (#16)
+
+- English and Arabic catalogues live in `web/src/locales/`. Keys use `common.snake_case`; the source-copy map lets existing screens use readable English fallbacks. New copy needs an English and Arabic entry. Dynamic messages interpolate named placeholders.
+- `i18n.ts` owns the language store. Components subscribe without remounting, so switching languages preserves unsaved input and recording state. Storage restrictions leave the language choice usable for the session.
+- The document's `lang` and `dir` follow the selected interface language. Layout uses logical spacing and directional navigation icons mirror; story text keeps its own language and direction. Noto Kufi Arabic is used for Arabic interface copy.
+
+## Frontend delivery and accessibility (#17)
+
+- Variable Manrope, Fraunces and Noto Kufi Arabic fonts are served locally through Fontsource packages with `font-display: swap`. There are no Google Fonts requests.
+- Routes and MapLibre load as separate chunks; the main entry decreased from about 1.34 MB to 260 KB uncompressed. MapLibre remains a roughly 954 KB optional map chunk. Route and map failures have retry or list fallbacks.
+- Shared avatars fall back to initials after image failure and retry a changed URL.
+- Keyboard navigation has a skip link, visible focus rings and mobile navigation. Timed text creates WebVTT caption tracks for media; transcript controls remain available. Text color tokens meet a 4.5:1 contrast target against their paired backgrounds. Reduced-motion preferences disable animation. ESLint includes the recommended accessibility checks; Prettier and TypeScript run separately.
+
+## Consent-backed voice cloning (#18)
+
+- Staff open a separate voice consent dialog. The speaker confirms identity, rights, storage, processing and synthetic narration before recording/upload. The server validates the current version and all acknowledgments and stores the exact displayed language/wording, authenticated actor, speaker name and server time. These attestations are recorded consent, not automated identity verification.
+- Samples are private MP3 copies, 30 to 60 seconds (half a second tolerance for encoding), at most 15 MB uploaded. The sample hash and consent are stored with the queued clone.
+- `VOICE_CLONE_PROVIDER=fake` is the default: it demonstrates the workflow without creating a synthetic voice. ElevenLabs uses its documented IVC endpoint, requires its server-side key, LIVE_AI_ENABLED, and a spending reservation. `VOICE_CLONE_ESTIMATE_USD` is a conservative reservation configured for the account, not a quoted provider price.
+- Cloning runs only in the worker. A clone submission has one attempt; uncertain external results need manual confirmation, preventing automatic duplicate creation. Provider-required verification is displayed and never treated as a ready voice.
+- Provider contract checked against https://elevenlabs.io/docs/api-reference/voices/ivc/create on 2026-10-25.
+
+## Premium and dummy checkout (#19)
+
+- Membership (`free` or `premium`) is stored on the account, independent of staff role. A server feature matrix describes access; premium gates sample playback on the server. Staff may preview samples for their work.
+- Checkout is explicitly a sandbox with no card fields, real charge or recurring subscription. Authenticated attempts move from processing to succeeded or failed after a configurable short delay. Polling finalizes the simulated result under a row lock. Success upgrades only the signed-in owner; failure never downgrades an existing membership. Request IDs prevent duplicates.
+- The Premium page resumes an attempt from its URL and refreshes authentication state after success. The gallery uses two small, attributed excerpts from the official Wan 2.2 demonstration reel, served locally with posters and on-demand playback. These are provider examples, not fabricated outputs of Hikaya stories. Provenance is in `api/seed/videos/README.md`.
+
+## Staff video generation (#20)
+
+- Reviewer/admin roles are enforced on every video configuration, submission, job and media endpoint. ENABLE_AI_VIDEO gates submission. The offline fake replays a saved provider demo and is labelled as such; it never pretends to generate the requested story.
+- The initial live adapter is fal's Wan 2.2 image-to-video endpoint. Prompt construction combines story title, place, polished text and staff direction. Input photos are snapshotted and sent as data URIs so the demo laptop needs no public media host. The UI exposes only supported models, 16:9/9:16 and a validated seed.
+- Submission is a worker job. The provider request URLs are saved before polling; finished media is downloaded with a size limit and served locally. The browser sees real queue/render/completion states, never a fabricated percentage. The same input hash reuses the existing job and cache.
+- Paid submission uses the existing gateway. A configurable conservative video estimate is committed on acceptance; uncertain submissions keep their estimate counted because the provider may already have billed. Polling and result retrieval use free gateway operations and never submit another inference request. Uncertain submissions and timed-out jobs retain state for staff follow-up instead of automatically submitting again.
+- fal queue contract: https://fal.ai/docs/documentation/model-apis/inference/queue ; model schema: https://fal.ai/models/fal-ai/wan/v2.2-a14b/image-to-video/api (checked 2026-10-25).
+
+## Alternative video providers (#21)
+
+- One browser function and one server provider interface cover fal, Higgsfield, Google Veo and a self-hosted Cog endpoint. Runtime selection is restricted to configured providers and supported models. Unsupported Higgsfield controls are disabled rather than sent as ignored parameters.
+- Updated provider research: the Gemini API Veo previews retired on 2026-10-22. The Google selection uses the supported GA Google Cloud Veo endpoint, requiring project/access-token settings. This explicitly replaces the older Gemini-API-key assumption in the initial research.
+- Cog's asynchronous prediction API has no GET polling contract. Its adapter makes an idempotent synchronous prediction call inside the worker instead; the app still tracks the local asynchronous job.
+- Deployment settings, model contracts, provider limitations and source links are in `docs/VIDEO_PROVIDERS.md`.
+
+## Browser verification (#22)
+
+- Playwright runs the real API and PostgreSQL worker with fake AI providers, local media and blocked external browser traffic. Three journeys verify discovery/RTL, sandbox Premium checkout, consent/upload and queued video playback, location denial, and staff authorization. CI records failure traces, screenshots, video and logs.
+- Browser verification caught and fixed lazy staff-module initialization, untranslated feed/player tabs, signup password labelling, and mobile RTL grid overflow. The mobile overflow assertion and axe scans remain regression checks.
+- Local setup and coverage limits are documented in `docs/BROWSER_TESTS.md`. Live paid services and physical microphone capture are outside the deterministic CI suite.
+- Final local verification: 228 backend tests, 11 frontend unit tests and 3 Chromium journeys pass, along with type checks, lint, formatting and the production build. The optional MapLibre bundle still produces Vite's chunk-size warning. Hosted CI has not been triggered.

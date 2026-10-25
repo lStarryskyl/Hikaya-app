@@ -1,9 +1,18 @@
+import { t, useLocale } from '../i18n'
 import { useEffect, useRef, useState } from 'react'
 import { AlertCircle, Loader2 } from 'lucide-react'
 import { ApiError } from '../api'
 import { useAuth } from '../auth'
 import { isStaff } from '../staff'
-import { MEDIA_STEPS, STEP_LABELS, getPipeline, getStory, retryStep, type PipelineStep, type StoryRecord } from '../stories'
+import {
+  MEDIA_STEPS,
+  STEP_LABELS,
+  getPipeline,
+  getStory,
+  retryStep,
+  type PipelineStep,
+  type StoryRecord,
+} from '../stories'
 import { PillButton } from './ui'
 
 const POLL_MS = 3000
@@ -19,6 +28,8 @@ export default function MediaProgress({
   story: StoryRecord
   onChange: (story: StoryRecord) => void
 }) {
+  useLocale()
+
   const [steps, setSteps] = useState<PipelineStep[]>([])
   const [retrying, setRetrying] = useState<string | null>(null)
   const [error, setError] = useState('')
@@ -76,7 +87,7 @@ export default function MediaProgress({
       await retryStep(story.id, step)
       setRound((r) => r + 1)
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'That did not work. Please try again.')
+      setError(e instanceof ApiError ? e.message : t('That did not work. Please try again.'))
     } finally {
       setRetrying(null)
     }
@@ -85,7 +96,10 @@ export default function MediaProgress({
   const shown = steps.filter((s) => s.status !== 'done')
   if (!allowed || shown.length === 0) return null
   return (
-    <div role="status" className="mb-4 space-y-2 rounded-xl2 border border-border bg-panel p-4 text-sm">
+    <div
+      role="status"
+      className="mb-4 space-y-2 rounded-xl2 border border-border bg-panel p-4 text-sm"
+    >
       {shown.map((s) => (
         <div key={s.step} className="flex flex-wrap items-center gap-2">
           {s.status === 'failed' ? (
@@ -93,7 +107,7 @@ export default function MediaProgress({
           ) : (
             <Loader2 size={15} className="animate-spin text-gold" aria-hidden />
           )}
-          <span className="text-ink">{STEP_LABELS[s.step]}</span>
+          <span className="text-ink">{t(STEP_LABELS[s.step])}</span>
           <span className="text-[11px] text-muted2">{s.message}</span>
           {s.status === 'failed' && (
             <PillButton
@@ -102,12 +116,16 @@ export default function MediaProgress({
               disabled={retrying !== null}
               onClick={() => void retry(s.step)}
             >
-              {retrying === s.step ? 'Trying again…' : 'Try again'}
+              {retrying === s.step ? t('Trying again…') : t('Try again')}
             </PillButton>
           )}
         </div>
       ))}
-      {error && <p role="alert" className="text-[12px] text-terracotta-dark">{error}</p>}
+      {error && (
+        <p role="alert" className="text-[12px] text-terracotta-dark">
+          {t(error)}
+        </p>
+      )}
     </div>
   )
 }

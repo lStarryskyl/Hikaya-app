@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import router as auth_router
+from app.billing import router as billing_router
 from app.config import get_settings
 from app.db import dispose_engine, get_session
 from app.discover import router as discover_router
@@ -19,6 +20,8 @@ from app.places import media_router as place_media_router
 from app.staff import router as staff_router
 from app.stories import me_router, media_router
 from app.stories import router as stories_router
+from app.videos import router as videos_router
+from app.voices import router as voices_router
 
 
 @asynccontextmanager
@@ -51,10 +54,13 @@ async def health(session: AsyncSession = Depends(get_session)) -> JSONResponse:
 api_v1 = APIRouter(prefix="/api/v1")
 api_v1.add_api_route("/health", health, methods=["GET"])
 api_v1.include_router(auth_router)
+api_v1.include_router(billing_router)
 api_v1.include_router(discover_router)
 api_v1.include_router(stories_router)
 api_v1.include_router(me_router)
 api_v1.include_router(staff_router)
+api_v1.include_router(voices_router)
+api_v1.include_router(videos_router)
 
 app.include_router(api_v1)
 app.include_router(place_media_router)

@@ -1,283 +1,389 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
-import {
-  Clock,
-  Compass,
-  Filter,
-  Layers,
-  Navigation,
-  Play,
-  Search,
-  Thermometer,
-  ZoomIn,
-  ZoomOut,
-} from 'lucide-react'
-import { Badge, Card, PillButton } from '../components/ui'
+import { t, useLocale, message, number } from '../i18n'
+import { Component, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
+import { MapPin, Navigation, Search, ZoomIn, ZoomOut } from 'lucide-react'
+import { Badge, Card } from '../components/ui'
 import JordanMap, { type JordanMapHandle } from '../components/JordanMap'
 import Photo from '../components/Photo'
-import { getFeed, getPins } from '../discover'
-import { CATEGORY_LABELS, formatDuration } from '../stories'
+import { type DiscoveryFilters, type StoryCard } from '../discover'
+import { CATEGORY_LABELS, formatDuration, getStory, type CategoryValue } from '../stories'
 import { toMapPins } from '../types'
-import { useApi } from '../useApi'
+import { useDebounced, useDiscovery, useNearby } from '../useDiscovery'
 
-const filters = ['All Stories', 'Museum', 'Ancient History', 'Oral Folklore', 'Crafts & Daily Life'] as const
-
-function matchesFilter({ category, curated }: { category: string | null; curated: boolean }, filter: string) {
-  if (filter === 'All Stories') return true
-  // The museum is the stories staff have curated (loaded with the API's filter).
-  if (filter === 'Museum') return curated
-  if (filter === 'Ancient History') return category === 'history'
-  if (filter === 'Oral Folklore') return category === 'folklore'
-  if (filter === 'Crafts & Daily Life') return category === 'crafts' || category === 'daily_life'
-  return true
+class MapBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false }
+  static getDerivedStateFromError() {
+    return { failed: true }
+  }
+  render() {
+    return this.state.failed ? (
+      <p role="status" className="p-6">
+        {t('The map is unavailable. You can still browse and open stories from the list.')}
+      </p>
+    ) : (
+      this.props.children
+    )
+  }
 }
 
 export default function ExploreMapPage() {
+  useLocale()
+
+  const [params, setParams] = useSearchParams()
+  const query = params.get('q') ?? ''
+  const tag = params.get('tag') ?? ''
+  const category = params.get('category') ?? ''
+  const curated = params.get('curated') === 'true'
+  const debouncedQuery = useDebounced(query)
+  const debouncedTag = useDebounced(tag)
+  const nearby = useNearby()
+  const [radius, setRadius] = useState(25)
+  const filters: DiscoveryFilters = {
+    q: debouncedQuery,
+    tag: debouncedTag.trim() ? [debouncedTag.trim()] : [],
+    category: Object.prototype.hasOwnProperty.call(CATEGORY_LABELS, category)
+      ? [category as CategoryValue]
+      : [],
+    curated,
+    ...(nearby.position ? { ...nearby.position, radius_km: radius } : {}),
+  }
+  const search = useDiscovery(filters)
+  const results = search.page?.items ?? []
   const mapRef = useRef<JordanMapHandle>(null)
-  const [activeFilter, setActiveFilter] = useState<(typeof filters)[number]>('All Stories')
-  const [query, setQuery] = useState('')
-  const [mapMode, setMapMode] = useState<'compass' | 'time' | 'heat'>('compass')
-  const feed = useApi(() => getFeed({ limit: 100 }), [])
-  // The museum comes from the API's own filter, so it is complete however many stories exist.
-  const museum = useApi(() => getFeed({ curated: true, limit: 100 }), [])
-  const pins = useApi(getPins, [])
-  const stories = useMemo(() => feed.data?.items ?? [], [feed.data])
-  const source = useMemo(
-    () => (activeFilter === 'Museum' ? (museum.data?.items ?? []) : stories),
-    [activeFilter, museum.data, stories],
-  )
-  const [focusedId, setFocusedId] = useState<string | null>(null)
-
-  // Search across title, place, storyteller and excerpt; the server-side search arrives in #15.
-  const results = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    return source.filter((s) => {
-      if (!matchesFilter(s, activeFilter)) return false
-      if (!q) return true
-      return (
-        s.title.toLowerCase().includes(q) ||
-        s.place_name.toLowerCase().includes(q) ||
-        s.author.display_name.toLowerCase().includes(q) ||
-        s.excerpt.toLowerCase().includes(q)
-      )
-    })
-  }, [source, activeFilter, query])
-
+  const [selected, setSelected] = useState<StoryCard | null>(null)
+  const [selectionError, setSelectionError] = useState('')
+  const selectionGeneration = useRef(0)
+  const filterKey = JSON.stringify(filters)
+  const requestNearby = nearby.request
+  const requestedOnArrival = useRef(false)
   useEffect(() => {
-    if (!focusedId && stories.length) setFocusedId((stories.find((s) => s.curated) ?? stories[0]).id)
-  }, [stories, focusedId])
+    if (params.get('nearby') === '1' && !requestedOnArrival.current) {
+      requestedOnArrival.current = true
+      requestNearby()
+    }
+  }, [params, requestNearby])
+  useEffect(() => {
+    selectionGeneration.current++
+    setSelected(null)
+    setSelectionError('')
+    return () => {
+      selectionGeneration.current++
+    }
+  }, [filterKey])
+  const focused = selected ?? results[0] ?? null
 
-  const focused = stories.find((s) => s.id === focusedId) ?? results[0] ?? null
-
-  const visiblePins = useMemo(
-    () => toMapPins((pins.data ?? []).filter((p) => results.some((s) => s.id === p.story_id))),
-    [pins.data, results],
-  )
+  function update(name: string, value: string) {
+    setParams(
+      (previous) => {
+        const next = new URLSearchParams(previous)
+        if (value) next.set(name, value)
+        else next.delete(name)
+        return next
+      },
+      { replace: name === 'q' || name === 'tag' },
+    )
+  }
+  async function selectStory(id: string) {
+    const current = ++selectionGeneration.current
+    setSelectionError('')
+    const loaded = results.find((story) => story.id === id)
+    if (loaded) {
+      setSelected(loaded)
+      return
+    }
+    try {
+      const story = await getStory(id)
+      if (current !== selectionGeneration.current) return
+      setSelected({
+        ...story,
+        excerpt: story.layers[0]?.segments[0]?.text ?? '',
+        distance_km: null,
+      })
+    } catch {
+      if (current === selectionGeneration.current)
+        setSelectionError('This story could not be opened. Try selecting it again.')
+    }
+  }
 
   return (
-    <div className="flex h-[calc(100vh-64px)] flex-col px-4 pb-0 pt-6 sm:px-6">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+    <div className="px-4 py-6 sm:px-6">
+      <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="font-serif text-2xl">Explore Jordan</h1>
-          <p className="text-sm text-muted">
-            {feed.loading ? 'Loading stories…' : `Discover ${feed.data?.total ?? stories.length} stories across the Kingdom`}
-          </p>
+          <h1 className="font-serif text-2xl">{t('Explore Jordan')}</h1>
+          <p className="text-sm text-muted2">{t('Find the voices and memories of a place.')}</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {filters.map((f) => (
-            <button
-              key={f}
-              onClick={() => setActiveFilter(f)}
-              className={`rounded-full border px-3.5 py-2 text-xs transition ${
-                activeFilter === f
-                  ? 'border-terracotta bg-terracotta text-cream'
-                  : 'border-border text-muted2 hover:bg-cream'
-              }`}
-            >
-              {f}
-            </button>
-          ))}
-          <button className="flex h-8 w-8 items-center justify-center rounded-full border border-border text-muted2">
-            <Layers size={14} />
+        <button
+          type="button"
+          onClick={nearby.request}
+          disabled={nearby.loading}
+          className="inline-flex items-center gap-2 rounded-full bg-terracotta px-4 py-2 text-sm text-cream disabled:opacity-60"
+        >
+          <Navigation size={16} />
+          {nearby.loading ? t('Finding your location…') : t('Explore near me')}
+        </button>
+      </div>
+      <form
+        role="search"
+        onSubmit={(event) => event.preventDefault()}
+        className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
+      >
+        <label className="text-sm">
+          {t('Search stories')}
+          <span className="mt-1 flex items-center gap-2 rounded-lg border border-border bg-panel px-3 py-2">
+            <Search size={16} aria-hidden />
+            <input
+              aria-label={t('Filter stories')}
+              value={query}
+              maxLength={200}
+              onChange={(e) => update('q', e.target.value)}
+              placeholder={t('Story, place or storyteller')}
+              className="min-w-0 flex-1 bg-transparent"
+            />
+          </span>
+        </label>
+        <label className="text-sm">
+          {t('Category')}
+          <select
+            value={category}
+            onChange={(e) => update('category', e.target.value)}
+            className="mt-1 block w-full rounded-lg border border-border bg-panel px-3 py-2"
+          >
+            <option value="">{t('All categories')}</option>
+            {Object.entries(CATEGORY_LABELS).map(([value, label]) => (
+              <option key={value} value={value}>
+                {t(label)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="text-sm">
+          {t('Tag')}
+          <input
+            value={tag}
+            maxLength={40}
+            onChange={(e) => update('tag', e.target.value)}
+            placeholder={t('e.g. weaving')}
+            className="mt-1 block w-full rounded-lg border border-border bg-panel px-3 py-2"
+          />
+        </label>
+        <div className="flex items-end gap-3 pb-2">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={curated}
+              onChange={(e) => update('curated', e.target.checked ? 'true' : '')}
+            />
+            {t('Museum')}
+          </label>
+          <button
+            type="button"
+            onClick={() => {
+              setParams({})
+              nearby.clear()
+              setRadius(25)
+            }}
+            className="text-sm text-terracotta-dark underline"
+          >
+            {t('Clear filters')}
           </button>
         </div>
-      </div>
-
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 pb-6 lg:grid-cols-[340px_1fr]">
-        <Card className="flex min-h-0 flex-col p-4">
-          <div className="mb-3 flex items-center gap-2 rounded-lg border border-border bg-cream px-3 py-2">
-            <Search size={14} className="text-muted" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Filter results by location or narrator…"
-              className="w-full bg-transparent text-xs outline-none placeholder:text-muted"
-            />
-          </div>
-          <div className="mb-2 flex items-center justify-between text-[11px] text-muted">
-            <span>RESULTS FOUND: {results.length}</span>
-            <span>Newest first</span>
-          </div>
-
-          <div className="scrollbar-thin flex-1 space-y-2 overflow-y-auto pr-1">
-            {results.map((r) => (
-              <button
-                key={r.id}
-                onClick={() => setFocusedId(r.id)}
-                className={`flex w-full gap-3 rounded-lg border p-2.5 text-left transition ${
-                  focusedId === r.id
-                    ? 'border-terracotta bg-terracotta-light/40'
-                    : 'border-transparent hover:bg-cream'
-                }`}
+      </form>
+      {nearby.error && (
+        <p
+          role="status"
+          className="mb-4 rounded-lg bg-terracotta-light p-3 text-sm text-terracotta-dark"
+        >
+          {t(nearby.error)}
+        </p>
+      )}
+      {nearby.position && (
+        <div className="mb-4 flex flex-wrap items-center gap-3 text-sm">
+          <label>
+            {t('Search radius')}{' '}
+            <select
+              aria-label={t('Search radius')}
+              value={radius}
+              onChange={(e) => setRadius(Number(e.target.value))}
+              className="rounded-lg border border-border bg-panel p-2"
+            >
+              {[5, 10, 25, 50, 100, 250, 500].map((km) => (
+                <option key={km} value={km}>
+                  {km} {t('km')}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span>{t('Using your approximate location for this search.')}</span>
+          <button
+            type="button"
+            onClick={() => {
+              nearby.clear()
+              update('nearby', '')
+            }}
+            className="text-terracotta-dark underline"
+          >
+            {t('Leave nearby mode')}
+          </button>
+        </div>
+      )}
+      <p role="status" aria-live="polite" className="mb-3 text-sm text-muted2">
+        {search.loading && !search.page
+          ? t('Loading stories…')
+          : message('{count} stories found', { count: number(search.page?.total ?? 0) })}
+        {nearby.position ? t(' · Nearest first') : t(' · Newest first')}
+      </p>
+      <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
+        <Card className="max-h-[70vh] overflow-y-auto p-3">
+          <div aria-busy={search.loading} className="space-y-3">
+            {search.loading &&
+              !search.page &&
+              [1, 2, 3].map((n) => (
+                <div key={n} aria-hidden className="h-24 animate-pulse rounded-xl bg-cream" />
+              ))}
+            {results.map((story) => (
+              <article
+                key={story.id}
+                className={`rounded-xl border p-3 ${focused?.id === story.id ? 'border-terracotta bg-terracotta-light/30' : 'border-border'}`}
               >
-                <Photo photo={r.cover} width={112} className="h-14 w-14 shrink-0 rounded-md object-cover" />
-                <div className="min-w-0">
-                  <div className="mb-1 flex items-center gap-2">
-                    <span className="rounded-full bg-terracotta-light px-2 py-0.5 text-[9px] font-semibold uppercase text-terracotta-dark">
-                      {r.category ? CATEGORY_LABELS[r.category] : 'Story'}
+                <button
+                  type="button"
+                  onClick={() => void selectStory(story.id)}
+                  aria-pressed={focused?.id === story.id}
+                  className="flex w-full gap-3 text-start"
+                >
+                  <Photo
+                    photo={story.cover}
+                    width={112}
+                    className="h-16 w-16 shrink-0 rounded-lg object-cover"
+                  />
+                  <span className="min-w-0">
+                    <span dir="auto" className="block font-medium">
+                      {story.title}
                     </span>
-                    <span className="flex items-center gap-1 text-[10px] text-muted">
-                      <Clock size={10} /> {formatDuration(r.duration_ms)}
+                    <span className="block text-xs text-muted2">
+                      {story.place_name} · {story.author.display_name}
                     </span>
-                    {r.curated && <Badge tone="teal">Curated</Badge>}
-                  </div>
-                  <div className="truncate text-[13px] font-medium">{r.title}</div>
-                  <div className="truncate text-[11px] text-muted">{r.excerpt}</div>
-                  <div className="mt-1 text-[10px] text-muted2">Told by {r.author.display_name}</div>
+                  </span>
+                </button>
+                <p dir="auto" className="my-2 line-clamp-2 text-xs text-muted2">
+                  {story.excerpt}
+                </p>
+                <div className="mb-2 flex flex-wrap gap-1">
+                  {story.curated && <Badge tone="teal">{t('Curated')}</Badge>}
+                  {story.tags?.map((value) => (
+                    <button
+                      type="button"
+                      key={value}
+                      onClick={() => update('tag', value)}
+                      className="rounded-full bg-cream px-2 py-1 text-xs"
+                    >
+                      #{value}
+                    </button>
+                  ))}
                 </div>
-              </button>
+                <div className="flex items-center justify-between text-xs">
+                  <span>
+                    {story.distance_km != null
+                      ? message('{distance} km away', {
+                          distance: number(story.distance_km, { maximumFractionDigits: 1 }),
+                        })
+                      : formatDuration(story.duration_ms)}
+                  </span>
+                  <Link
+                    className="font-medium text-terracotta-dark underline"
+                    to={`/story/${story.id}`}
+                  >
+                    {t('Listen to story')}
+                  </Link>
+                </div>
+              </article>
             ))}
-            {feed.error && <p className="py-8 text-center text-xs text-terracotta-dark">{feed.error}</p>}
-            {!feed.loading && !feed.error && results.length === 0 && (
-              <p className="py-8 text-center text-xs text-muted">No stories match this filter.</p>
+            {!search.loading && !search.error && results.length === 0 && (
+              <div className="p-6 text-center">
+                <p>{t('No stories match these filters.')}</p>
+                <p className="mt-2 text-sm text-muted2">
+                  {t('Try a different place or tag, clear filters, or widen the nearby radius.')}
+                </p>
+              </div>
+            )}
+            {search.error && (
+              <div role="alert" className="p-3 text-sm text-terracotta-dark">
+                <p>{t(search.error)}</p>
+                <button
+                  type="button"
+                  onClick={search.page ? () => void search.loadMore() : search.retry}
+                  className="mt-2 underline"
+                >
+                  {t('Try again')}
+                </button>
+              </div>
+            )}
+            {search.page?.next_cursor && (
+              <button
+                type="button"
+                disabled={search.loading}
+                onClick={() => void search.loadMore()}
+                className="w-full rounded-full border border-border p-3 text-sm"
+              >
+                {search.loading ? t('Loading…') : t('Load more stories')}
+              </button>
             )}
           </div>
-
-          {focused && (
-            <div className="mt-3 border-t border-border pt-3">
-              <div className="mb-2 flex items-center gap-2 text-[11px] font-medium text-terracotta">
-                <Navigation size={12} /> Currently focused
-              </div>
-              <div className="mb-3 font-serif text-sm">{focused.title}</div>
-              <div className="flex gap-2">
-                <Link to={`/story/${focused.id}`} className="flex-1">
-                  <PillButton variant="primary" className="w-full justify-center !py-2">
-                    <Play size={13} /> Listen now
-                  </PillButton>
-                </Link>
-                <Link to={`/story/${focused.id}`} className="flex-1">
-                  <PillButton variant="outline" className="w-full justify-center !py-2">
-                    View details
-                  </PillButton>
-                </Link>
-              </div>
-            </div>
-          )}
         </Card>
-
-        <Card className="relative min-h-[420px] overflow-hidden">
-          <JordanMap
-            ref={mapRef}
-            pins={visiblePins}
-            focusedStoryId={focusedId}
-            onSelectStory={(id) => setFocusedId(id)}
-            className="absolute inset-0"
-          />
-
-          <div className="pointer-events-none absolute right-4 top-4 z-10 w-52 rounded-xl bg-panel/95 px-4 py-3 text-[11px] shadow-sm">
-            <div className="pointer-events-auto">
-              <div className="mb-2 flex items-center justify-between font-semibold">
-                Map legend <span className="h-1.5 w-1.5 rounded-full bg-teal" />
-              </div>
-              <div className="space-y-1.5 text-muted2">
-                <div className="flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full bg-terracotta" /> In the museum
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full bg-gold" /> Other stories
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full bg-teal" /> Recently added
-                </div>
-              </div>
-              <p className="mt-2 border-t border-border pt-2 text-[10px] text-muted">
-                Click pins to preview. Drag to pan Jordan.
+        <Card className="relative min-h-[480px] overflow-hidden">
+          <MapBoundary>
+            <JordanMap
+              ref={mapRef}
+              pins={toMapPins(search.pins)}
+              focusedStoryId={focused?.id}
+              onSelectStory={(id) => void selectStory(id)}
+              className="absolute inset-0"
+            />
+          </MapBoundary>
+          <div className="absolute end-4 top-4 flex flex-col gap-2">
+            <button
+              type="button"
+              aria-label={t('Zoom in')}
+              onClick={() => mapRef.current?.zoomIn()}
+              className="rounded-lg bg-panel p-3 shadow"
+            >
+              <ZoomIn size={16} />
+            </button>
+            <button
+              type="button"
+              aria-label={t('Zoom out')}
+              onClick={() => mapRef.current?.zoomOut()}
+              className="rounded-lg bg-panel p-3 shadow"
+            >
+              <ZoomOut size={16} />
+            </button>
+          </div>
+          {focused && (
+            <div className="absolute bottom-4 start-4 end-4 rounded-xl bg-panel p-4 shadow">
+              <p className="mb-1 flex items-center gap-1 text-xs text-muted2">
+                <MapPin size={12} />
+                {focused.place_name}
+              </p>
+              <Link
+                dir="auto"
+                to={`/story/${focused.id}`}
+                className="font-serif text-lg text-terracotta-dark underline"
+              >
+                {focused.title}
+              </Link>
+              <p className="text-xs text-muted2">
+                {t('Told by')} {focused.author.display_name}
               </p>
             </div>
-          </div>
-
-          {focused && (
-            <div className="absolute bottom-16 left-4 z-10 w-64 rounded-xl bg-panel p-3 shadow-md">
-              <div className="flex gap-2">
-                <Photo photo={focused.cover} width={96} className="h-12 w-12 rounded-md object-cover" />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-[10px] uppercase text-muted">{focused.title}</div>
-                  <div className="text-[11px] text-muted2">Told by {focused.author.display_name}</div>
-                </div>
-                <Link
-                  to={`/story/${focused.id}`}
-                  aria-label={`Listen to ${focused.title}`}
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-terracotta text-cream"
-                >
-                  <Play size={12} fill="currentColor" />
-                </Link>
-              </div>
-            </div>
           )}
-
-          <div className="absolute bottom-4 right-4 z-10 flex flex-col gap-2">
-            <button
-              type="button"
-              className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-panel"
-              onClick={() => mapRef.current?.zoomIn()}
-              aria-label="Zoom in"
+          {selectionError && (
+            <p
+              role="alert"
+              className="absolute top-4 start-4 max-w-xs rounded-lg bg-panel p-3 text-sm"
             >
-              <ZoomIn size={14} />
-            </button>
-            <button
-              type="button"
-              className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-panel"
-              onClick={() => mapRef.current?.zoomOut()}
-              aria-label="Zoom out"
-            >
-              <ZoomOut size={14} />
-            </button>
-            <button
-              type="button"
-              className="flex h-8 w-8 items-center justify-center rounded-lg bg-terracotta text-cream"
-              onClick={() => mapRef.current?.reset()}
-              aria-label="Reset map"
-            >
-              <Navigation size={14} />
-            </button>
-          </div>
-
-          <div className="absolute bottom-4 left-4 z-10 flex max-w-[calc(100%-5rem)] items-center gap-3 overflow-x-auto rounded-full bg-ink/90 px-4 py-2 text-[11px] text-cream lg:left-1/2 lg:-translate-x-1/2">
-            <span className="flex shrink-0 items-center gap-1.5">
-              <span className="h-1.5 w-1.5 rounded-full bg-teal" /> Map active
-            </span>
-            <button
-              onClick={() => setMapMode('compass')}
-              className={`flex shrink-0 items-center gap-1 ${mapMode === 'compass' ? 'text-terracotta-light' : ''}`}
-            >
-              <Compass size={12} /> Compass view
-            </button>
-            <button
-              onClick={() => setMapMode('time')}
-              className={`hidden shrink-0 items-center gap-1 sm:flex ${mapMode === 'time' ? 'text-terracotta-light' : ''}`}
-            >
-              <Clock size={12} /> Time layers
-            </button>
-            <button
-              onClick={() => setMapMode('heat')}
-              className={`hidden shrink-0 items-center gap-1 sm:flex ${mapMode === 'heat' ? 'text-terracotta-light' : ''}`}
-            >
-              <Thermometer size={12} /> Heatmap
-            </button>
-            <button className="flex shrink-0 items-center gap-1">
-              <Filter size={12} />
-            </button>
-          </div>
+              {t(selectionError)}
+            </p>
+          )}
         </Card>
       </div>
     </div>

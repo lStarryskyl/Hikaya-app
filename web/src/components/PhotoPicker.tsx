@@ -1,9 +1,15 @@
+import { t, useLocale, message } from '../i18n'
 import { useRef, useState, type DragEvent } from 'react'
 import { ArrowDown, ArrowUp, ImagePlus, X } from 'lucide-react'
 import { ApiError } from '../api'
 import { getPlaces } from '../discover'
 import {
-  addPhoto, deletePhoto, getLimits, pickGalleryPhoto, reorderPhotos, type StoryPhoto,
+  addPhoto,
+  deletePhoto,
+  getLimits,
+  pickGalleryPhoto,
+  reorderPhotos,
+  type StoryPhoto,
 } from '../stories'
 import { useApi } from '../useApi'
 import Photo from './Photo'
@@ -25,6 +31,8 @@ export default function PhotoPicker({
   /** Opens the gallery on this place when it matches one. */
   placeHint?: string
 }) {
+  useLocale()
+
   const places = useApi(getPlaces, [])
   const limits = useApi(getLimits, [])
   const [gallerySlug, setGallerySlug] = useState('')
@@ -55,7 +63,7 @@ export default function PhotoPicker({
     try {
       commit(await action())
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'That did not work. Please try again.')
+      setError(e instanceof ApiError ? e.message : t('That did not work. Please try again.'))
     } finally {
       setBusy(false)
     }
@@ -71,8 +79,8 @@ export default function PhotoPicker({
     if (bad) {
       setError(
         photo_types.includes(bad.type)
-          ? `${bad.name} is larger than ${photo_max_mb} MB.`
-          : `${bad.name} is not a PNG, JPEG or WebP photo.`,
+          ? message('{name} is larger than {limit} MB.', { name: bad.name, limit: photo_max_mb })
+          : message('{name} is not a PNG, JPEG or WebP photo.', { name: bad.name }),
       )
       return
     }
@@ -109,10 +117,13 @@ export default function PhotoPicker({
         }`}
       >
         <ImagePlus size={28} className="mb-2 text-terracotta" />
-        <p className="mb-1 text-sm text-ink2">Drag and drop your photos here</p>
+        <p className="mb-1 text-sm text-ink2">{t('Drag and drop your photos here')}</p>
         <p className="mb-3 text-[11px] text-muted">
           {limits.data
-            ? `PNG, JPEG or WebP · up to ${limits.data.photo_max_mb} MB each · up to ${maxCount} photos`
+            ? message('PNG, JPEG or WebP · up to {limit} MB each · up to {count} photos', {
+                limit: limits.data.photo_max_mb,
+                count: maxCount,
+              })
             : limits.error || 'Loading the limits…'}
         </p>
         <input
@@ -121,7 +132,7 @@ export default function PhotoPicker({
           accept="image/png,image/jpeg,image/webp"
           multiple
           className="hidden"
-          aria-label="Upload photos"
+          aria-label={t('Upload photos')}
           onChange={(e) => {
             upload(e.target.files)
             e.target.value = ''
@@ -133,16 +144,18 @@ export default function PhotoPicker({
           disabled={blocked}
           onClick={() => input.current?.click()}
         >
-          {busy ? 'Saving…' : 'Choose photos'}
+          {busy ? t('Saving…') : t('Choose photos')}
         </PillButton>
       </div>
 
       {places.data && places.data.length > 0 && (
         <div>
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <div className="text-xs font-semibold">No photos of your own? Pick from a gallery</div>
+            <div className="text-xs font-semibold">
+              {t('No photos of your own? Pick from a gallery')}
+            </div>
             <label className="text-[11px] text-muted2">
-              <span className="sr-only">Gallery</span>
+              <span className="sr-only">{t('Gallery')}</span>
               <select
                 value={galleryPlace?.slug ?? ''}
                 onChange={(e) => setGallerySlug(e.target.value)}
@@ -165,14 +178,23 @@ export default function PhotoPicker({
                   type="button"
                   disabled={blocked || chosen}
                   onClick={() =>
-                    void run(async () => [...latest.current, await pickGalleryPhoto(storyId, p.slug)])
+                    void run(async () => [
+                      ...latest.current,
+                      await pickGalleryPhoto(storyId, p.slug),
+                    ])
                   }
-                  aria-label={chosen ? `${p.caption} (added)` : `Add ${p.caption}`}
+                  aria-label={
+                    chosen
+                      ? message('{caption} (added)', { caption: p.caption })
+                      : message('Add {caption}', { caption: p.caption })
+                  }
                   className="relative shrink-0 overflow-hidden rounded-lg border border-border disabled:opacity-50"
                 >
                   <Photo photo={p} width={192} className="h-20 w-28 object-cover" />
                   {chosen && (
-                    <span className="absolute inset-x-0 bottom-0 bg-black/60 py-0.5 text-[9px] text-cream">Added</span>
+                    <span className="absolute inset-x-0 bottom-0 bg-black/60 py-0.5 text-[9px] text-cream">
+                      {t('Added')}
+                    </span>
                   )}
                 </button>
               )
@@ -182,21 +204,29 @@ export default function PhotoPicker({
       )}
 
       {photos.length > 0 && (
-        <ol className="grid grid-cols-2 gap-3 sm:grid-cols-4" aria-label="Your photos, in order">
+        <ol
+          className="grid grid-cols-2 gap-3 sm:grid-cols-4"
+          aria-label={t('Your photos, in order')}
+        >
           {photos.map((p, i) => (
             <li key={p.id} className="relative overflow-hidden rounded-lg border border-border">
-              <Photo photo={p.photo} width={240} alt={p.photo.caption || `Photo ${i + 1}`} className="aspect-square w-full object-cover" />
+              <Photo
+                photo={p.photo}
+                width={240}
+                alt={p.photo.caption || message('Photo {index}', { index: i + 1 })}
+                className="aspect-square w-full object-cover"
+              />
               {i === 0 && (
-                <span className="absolute left-1.5 top-1.5 rounded bg-terracotta px-1.5 py-0.5 text-[9px] font-semibold text-cream">
-                  Cover
+                <span className="absolute start-1.5 top-1.5 rounded bg-terracotta px-1.5 py-0.5 text-[9px] font-semibold text-cream">
+                  {t('Cover')}
                 </span>
               )}
-              <div className="absolute right-1.5 top-1.5 flex gap-1">
+              <div className="absolute end-1.5 top-1.5 flex gap-1">
                 <button
                   type="button"
                   disabled={busy || i === 0}
                   onClick={() => move(i, -1)}
-                  aria-label={`Move photo ${i + 1} earlier`}
+                  aria-label={message('Move photo {index} earlier', { index: i + 1 })}
                   className="flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-white disabled:opacity-30"
                 >
                   <ArrowUp size={13} />
@@ -205,7 +235,7 @@ export default function PhotoPicker({
                   type="button"
                   disabled={busy || i === photos.length - 1}
                   onClick={() => move(i, 1)}
-                  aria-label={`Move photo ${i + 1} later`}
+                  aria-label={message('Move photo {index} later', { index: i + 1 })}
                   className="flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-white disabled:opacity-30"
                 >
                   <ArrowDown size={13} />
@@ -219,7 +249,7 @@ export default function PhotoPicker({
                       return latest.current.filter((x) => x.id !== p.id)
                     })
                   }
-                  aria-label={`Remove photo ${i + 1}`}
+                  aria-label={message('Remove photo {index}', { index: i + 1 })}
                   className="flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-white"
                 >
                   <X size={13} />
@@ -231,8 +261,11 @@ export default function PhotoPicker({
       )}
 
       {error && (
-        <p role="alert" className="rounded-lg bg-terracotta-light px-3 py-2 text-sm text-terracotta-dark">
-          {error}
+        <p
+          role="alert"
+          className="rounded-lg bg-terracotta-light px-3 py-2 text-sm text-terracotta-dark"
+        >
+          {t(error)}
         </p>
       )}
     </div>

@@ -31,3 +31,8 @@ Thumbs.db
 # demo packs (exported AI results; may contain recordings)
 demo-pack/
 *.demo-pack.tar.gz
+
+# Browser test output and generated microphone fixture
+web/test-results/
+web/playwright-report/
+web/e2e/fixtures/

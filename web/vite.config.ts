@@ -10,8 +10,8 @@ export default defineConfig({
   optimizeDeps: { exclude: ['maplibre-gl'] },
   server: {
     proxy: {
-      '/api': 'http://localhost:8000',
-      '/media': 'http://localhost:8000',
+      '/api': process.env.VITE_API_PROXY_TARGET ?? 'http://localhost:8000',
+      '/media': process.env.VITE_API_PROXY_TARGET ?? 'http://localhost:8000',
     },
   },
 })

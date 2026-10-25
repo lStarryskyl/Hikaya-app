@@ -12,7 +12,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,6 +33,7 @@ from app.models import (
 )
 from app.providers import MODERATION_LABELS
 from app.storage import LocalStorage, TooLarge, get_storage
+from app.tags import normalize_tag
 from app.visibility import STAFF_ROLES, can_view
 
 router = APIRouter(prefix="/stories", tags=["stories"])
@@ -45,6 +46,15 @@ PlaceName = Annotated[str, StringConstraints(strip_whitespace=True, max_length=1
 
 
 class StoryFields(BaseModel):
+    tags: list[Annotated[str, StringConstraints(min_length=1, max_length=40)]] = Field(
+        default_factory=list, max_length=10
+    )
+
+    @field_validator("tags")
+    @classmethod
+    def clean_tags(cls, tags: list[str]) -> list[str]:
+        return list(dict.fromkeys(normalize_tag(tag) for tag in tags))
+
     title: Title | None = None
     category: Category | None = None
     place_name: PlaceName | None = None
@@ -167,6 +177,8 @@ class MyStory(BaseModel):
 
 
 class StoryOut(BaseModel):
+    tags: list[str]
+
     id: uuid.UUID
     title: str
     category: str | None
@@ -294,6 +306,7 @@ async def to_out(session: AsyncSession, story: Story, *, private: bool = False) 
             original_url=media_url(original),
         )
     out = StoryOut(
+        tags=story.tags,
         id=story.id,
         title=story.title,
         category=story.category,

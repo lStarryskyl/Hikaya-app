@@ -321,3 +321,17 @@ async def test_a_playlist_disguised_as_audio_cannot_make_ffmpeg_read_other_files
         assert (
             await upload(client, story["id"], trick, content_type=content_type)
         ).status_code == 422
+
+
+async def test_tags_are_normalized_saved_and_editable(client):
+    await sign_up(client, "tags@example.com")
+    story = await new_story(client, tags=[" Weaving ", "WEAVING", "تراث"])
+    assert story["tags"] == ["weaving", "تراث"]
+    updated = await client.patch(f"/api/v1/stories/{story['id']}", json={"tags": ["History"]})
+    assert updated.json()["tags"] == ["history"]
+    read = await client.get(f"/api/v1/stories/{story['id']}")
+    assert read.json()["tags"] == ["history"]
+    for tags in ([" "], ["x" * 41], [str(i) for i in range(11)], None):
+        assert (
+            await client.patch(f"/api/v1/stories/{story['id']}", json={"tags": tags})
+        ).status_code == 422

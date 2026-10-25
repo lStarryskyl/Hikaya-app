@@ -1,11 +1,23 @@
+import { t, useLocale } from '../i18n'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertCircle, Check, Clock, Loader2, RotateCcw } from 'lucide-react'
 import { ApiError } from '../api'
 import { PillButton } from './ui'
 import {
-  LAYER_LABELS, MAX_SEGMENT_CHARS, MEDIA_STEPS, STEP_LABELS, editLayer, getPipeline, getStory, retryStep,
-  textDirection, textFont, timestamp,
-  type LayerKind, type PipelineStatus, type StoryRecord,
+  LAYER_LABELS,
+  MAX_SEGMENT_CHARS,
+  MEDIA_STEPS,
+  STEP_LABELS,
+  editLayer,
+  getPipeline,
+  getStory,
+  retryStep,
+  textDirection,
+  textFont,
+  timestamp,
+  type LayerKind,
+  type PipelineStatus,
+  type StoryRecord,
 } from '../stories'
 
 const POLL_MS = 1500
@@ -18,6 +30,8 @@ export default function TranscriptEditor({
   storyId: string
   onStory: (story: StoryRecord) => void
 }) {
+  useLocale()
+
   const [pipeline, setPipeline] = useState<PipelineStatus | null>(null)
   const [story, setStory] = useState<StoryRecord | null>(null)
   const [active, setActive] = useState<LayerKind>('verbatim')
@@ -65,10 +79,11 @@ export default function TranscriptEditor({
       try {
         const status = await refresh()
         const busy = status.steps.some((s) => s.status === 'queued' || s.status === 'running')
-        if (!stopped && (busy || status.steps.length === 0)) timer = window.setTimeout(tick, POLL_MS)
+        if (!stopped && (busy || status.steps.length === 0))
+          timer = window.setTimeout(tick, POLL_MS)
       } catch (e) {
         if (!stopped) {
-          setError(e instanceof ApiError ? e.message : 'Could not check progress.')
+          setError(e instanceof ApiError ? e.message : t('Could not check progress.'))
           timer = window.setTimeout(tick, POLL_MS * 2)
         }
       }
@@ -91,7 +106,7 @@ export default function TranscriptEditor({
     if (!layer) return
     setSaving(true)
     setError('')
-    const seq = ++requestSeq.current
+    ++requestSeq.current
     try {
       const fresh = await editLayer(storyId, layer.kind, texts)
       if (!mounted.current) return // the save started a newer request, so older polls are ignored
@@ -101,7 +116,7 @@ export default function TranscriptEditor({
       lastSignature.current = ''
       setPollKey((k) => k + 1)
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Saving failed.')
+      setError(e instanceof ApiError ? e.message : t('Saving failed.'))
     } finally {
       setSaving(false)
     }
@@ -114,59 +129,73 @@ export default function TranscriptEditor({
       lastSignature.current = ''
       setPollKey((k) => k + 1)
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Retry failed.')
+      setError(e instanceof ApiError ? e.message : t('Retry failed.'))
     }
   }
 
   return (
-    <div className="grid gap-5 text-left md:grid-cols-[240px_1fr]">
+    <div className="grid gap-5 text-start md:grid-cols-[240px_1fr]">
       <div className="rounded-xl2 border border-border bg-panel p-5">
-        <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted">Progress</div>
+        <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted">
+          {t('Progress')}
+        </div>
         {!pipeline || pipeline.steps.length === 0 ? (
-          <p className="text-sm text-muted2">Starting…</p>
+          <p className="text-sm text-muted2">{t('Starting…')}</p>
         ) : (
           <ol className="space-y-3">
             {/* Narration and the slideshow run after submitting; the player shows them. */}
-            {pipeline.steps.filter((s) => !MEDIA_STEPS.includes(s.step)).map((s) => (
-              <li key={s.step} className="text-sm">
-                <div className="flex items-center gap-2">
-                  {s.status === 'done' ? (
-                    <Check size={15} className="text-teal" aria-hidden />
-                  ) : s.status === 'failed' ? (
-                    <AlertCircle size={15} className="text-terracotta" aria-hidden />
-                  ) : s.status === 'waiting' ? (
-                    <Clock size={15} className="text-muted" aria-hidden />
-                  ) : (
-                    <Loader2
-                      size={15}
-                      className={`text-gold ${s.status === 'running' ? 'animate-spin' : ''}`}
-                      aria-hidden
-                    />
+            {pipeline.steps
+              .filter((s) => !MEDIA_STEPS.includes(s.step))
+              .map((s) => (
+                <li key={s.step} className="text-sm">
+                  <div className="flex items-center gap-2">
+                    {s.status === 'done' ? (
+                      <Check size={15} className="text-teal" aria-hidden />
+                    ) : s.status === 'failed' ? (
+                      <AlertCircle size={15} className="text-terracotta" aria-hidden />
+                    ) : s.status === 'waiting' ? (
+                      <Clock size={15} className="text-muted" aria-hidden />
+                    ) : (
+                      <Loader2
+                        size={15}
+                        className={`text-gold ${s.status === 'running' ? 'animate-spin' : ''}`}
+                        aria-hidden
+                      />
+                    )}
+                    <span className={s.status === 'done' ? 'text-ink2' : 'text-ink'}>
+                      {t(STEP_LABELS[s.step])}
+                    </span>
+                  </div>
+                  {s.status !== 'done' && (
+                    <p className="ms-6 mt-0.5 text-[11px] text-muted2">{s.message}</p>
                   )}
-                  <span className={s.status === 'done' ? 'text-ink2' : 'text-ink'}>{STEP_LABELS[s.step]}</span>
-                </div>
-                {s.status !== 'done' && <p className="ms-6 mt-0.5 text-[11px] text-muted2">{s.message}</p>}
-                {s.status === 'failed' && (
-                  <button
-                    type="button"
-                    onClick={() => void retry(s.step)}
-                    className="ms-6 mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-terracotta hover:underline"
-                  >
-                    <RotateCcw size={11} /> Try again
-                  </button>
-                )}
-              </li>
-            ))}
+                  {s.status === 'failed' && (
+                    <button
+                      type="button"
+                      onClick={() => void retry(s.step)}
+                      className="ms-6 mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-terracotta hover:underline"
+                    >
+                      <RotateCcw size={11} /> {t('Try again')}
+                    </button>
+                  )}
+                </li>
+              ))}
           </ol>
         )}
       </div>
 
       <div className="rounded-xl2 border border-border bg-panel p-5">
         {layers.length === 0 ? (
-          <p className="text-sm text-muted2">Your transcript appears here as soon as it is ready.</p>
+          <p className="text-sm text-muted2">
+            {t('Your transcript appears here as soon as it is ready.')}
+          </p>
         ) : (
           <>
-            <div className="mb-4 flex flex-wrap gap-2" role="tablist" aria-label="Text versions">
+            <div
+              className="mb-4 flex flex-wrap gap-2"
+              role="tablist"
+              aria-label={t('Text versions')}
+            >
               {layers.map((l) => (
                 <button
                   key={l.kind}
@@ -175,10 +204,12 @@ export default function TranscriptEditor({
                   aria-selected={l.kind === layer?.kind}
                   onClick={() => setActive(l.kind)}
                   className={`rounded-full px-3 py-1.5 text-[11px] font-semibold ${
-                    l.kind === layer?.kind ? 'bg-terracotta text-cream' : 'bg-cream text-muted2 hover:bg-border'
+                    l.kind === layer?.kind
+                      ? 'bg-terracotta text-cream'
+                      : 'bg-cream text-muted2 hover:bg-border'
                   }`}
                 >
-                  {LAYER_LABELS[l.kind]}
+                  {t(LAYER_LABELS[l.kind])}
                   {drafts[l.kind] ? ' •' : ''}
                 </button>
               ))}
@@ -208,10 +239,16 @@ export default function TranscriptEditor({
                 <div className="flex items-center justify-between pt-2">
                   <p className="text-[11px] text-muted">
                     {layer.kind === 'verbatim'
-                      ? 'Saving the original words remakes the polished text and translations, replacing edits made to them.'
+                      ? t(
+                          'Saving the original words remakes the polished text and translations, replacing edits made to them.',
+                        )
                       : layer.kind === 'polished'
-                        ? 'Saving the polished text remakes the translations, replacing edits made to them.'
-                        : 'Your edits to a translation are kept, unless an earlier version changes.'}
+                        ? t(
+                            'Saving the polished text remakes the translations, replacing edits made to them.',
+                          )
+                        : t(
+                            'Your edits to a translation are kept, unless an earlier version changes.',
+                          )}
                   </p>
                   <PillButton
                     type="button"
@@ -220,7 +257,7 @@ export default function TranscriptEditor({
                     onClick={() => void save()}
                     className="!py-2 text-xs disabled:opacity-50"
                   >
-                    {saving ? 'Saving…' : 'Save changes'}
+                    {saving ? t('Saving…') : t('Save changes')}
                   </PillButton>
                 </div>
               </div>
@@ -228,8 +265,11 @@ export default function TranscriptEditor({
           </>
         )}
         {error && (
-          <p role="alert" className="mt-3 rounded-lg bg-terracotta-light px-3 py-2 text-sm text-terracotta-dark">
-            {error}
+          <p
+            role="alert"
+            className="mt-3 rounded-lg bg-terracotta-light px-3 py-2 text-sm text-terracotta-dark"
+          >
+            {t(error)}
           </p>
         )}
       </div>

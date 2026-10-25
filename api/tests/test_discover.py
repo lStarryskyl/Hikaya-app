@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.models import Story, User
+from app.models import Story, TextLayer, User
 
 
 @pytest.fixture
@@ -145,3 +145,81 @@ async def test_a_full_feed_page_takes_a_handful_of_queries(client, session, auth
         event.remove(get_engine().sync_engine, "before_cursor_execute", listener)
     assert len(r.json()["items"]) == 20
     assert len(statements) <= 8, statements
+
+
+async def test_search_matches_full_text_and_never_exposes_private_stories(client, session, author):
+    story = await add_story(session, author, "Old memory", days_ago=200)
+    session.add(
+        TextLayer(
+            story_id=story.id,
+            kind="polished",
+            language="jordanian",
+            segments=[{"text": "حكاية البحر", "start_ms": 0, "end_ms": 1000}],
+        )
+    )
+    await add_story(session, author, "حكاية البحر", status="held")
+    for i in range(101):
+        await add_story(session, author, f"Other {i}", days_ago=1)
+    await session.commit()
+    body = (await client.get("/api/v1/stories", params={"q": "البحر"})).json()
+    assert [s["id"] for s in body["items"]] == [str(story.id)]
+    assert body["total"] == 1
+    pins = (await client.get("/api/v1/map/pins", params={"q": "البحر"})).json()
+    assert [p["story_id"] for p in pins] == [str(story.id)]
+
+
+async def test_search_treats_wildcards_as_literal_text(client, session, author):
+    await add_story(session, author, "100% true", days_ago=1)
+    await add_story(session, author, "Other", days_ago=1)
+    body = (await client.get("/api/v1/stories", params={"q": "%"})).json()
+    assert [s["title"] for s in body["items"]] == ["100% true"]
+
+
+async def test_nearby_filters_and_pages_nearest_first(client, session, author):
+    await add_story(session, author, "North", days_ago=1, lat=1, lng=0)
+    await add_story(session, author, "Origin", days_ago=5, lat=0, lng=0)
+    await add_story(session, author, "Far", days_ago=1, lat=10, lng=0)
+    await add_story(session, author, "No location", days_ago=1, lat=None, lng=None)
+    params = {"latitude": 0, "longitude": 0, "radius_km": 120, "limit": 1}
+    first = (await client.get("/api/v1/stories", params=params)).json()
+    assert first["total"] == 2
+    assert first["items"][0]["title"] == "Origin"
+    assert first["items"][0]["distance_km"] == 0
+    second = (
+        await client.get("/api/v1/stories", params={**params, "cursor": first["next_cursor"]})
+    ).json()
+    assert second["items"][0]["title"] == "North"
+    assert second["items"][0]["distance_km"] == pytest.approx(111.195, abs=0.01)
+    assert second["next_cursor"] is None
+    changed = await client.get(
+        "/api/v1/stories", params={**params, "radius_km": 200, "cursor": first["next_cursor"]}
+    )
+    assert changed.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"latitude": 1},
+        {"longitude": 1},
+        {"radius_km": 10},
+        {"latitude": 91, "longitude": 0},
+        {"latitude": 0, "longitude": 0, "radius_km": 0},
+        {"category": "unknown"},
+        {"q": "x" * 201},
+    ],
+)
+async def test_invalid_discovery_filters_are_refused(client, params):
+    for path in ("/api/v1/stories", "/api/v1/map/pins"):
+        assert (await client.get(path, params=params)).status_code == 422
+
+
+async def test_category_tags_and_museum_filters_combine(client, session, author):
+    match = await add_story(session, author, "Museum", days_ago=1, curated=True)
+    match.tags = ["weaving", "تراث"]
+    await add_story(session, author, "Other", days_ago=1)
+    await session.commit()
+    params = {"category": "folklore", "tag": "WEAVING", "curated": "true"}
+    body = (await client.get("/api/v1/stories", params=params)).json()
+    assert [s["id"] for s in body["items"]] == [str(match.id)]
+    assert body["items"][0]["tags"] == ["weaving", "تراث"]

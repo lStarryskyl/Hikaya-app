@@ -1,11 +1,14 @@
+import uuid
 from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy import select
 
 from app.config import get_settings
-from app.models import Role, Story
+from app.models import Job, Role, Story, VideoGeneration
 from app.seed_staff import StaffSeed, seed_staff
 from app.worker import run_one
+from tests.test_moderation import drain
 
 PASSWORD = "video-test-password"
 
@@ -62,7 +65,7 @@ async def test_staff_can_queue_a_demo_preview_and_read_progress(
     assert "Madaba" in generation["prompt"]
     repeated = (await client.post("/api/v1/staff/videos", json=payload)).json()
     assert repeated["id"] == generation["id"]
-    assert await run_one(sessionmaker)
+    await drain(sessionmaker)  # submit, then check until the video is ready
     completed = (await client.get(f"/api/v1/staff/videos/{generation['id']}")).json()
     assert completed["status"] == "done"
     assert completed["demo"] is True
@@ -177,3 +180,107 @@ async def test_uncertain_paid_submission_keeps_its_reservation_counted(session):
         assert entry.actual_usd == Decimal("1.00")
     finally:
         settings.live_ai_enabled = old
+
+
+async def queue_preview(client, session, sessionmaker, monkeypatch):
+    import uuid
+
+    monkeypatch.setattr(get_settings(), "enable_ai_video", True)
+    monkeypatch.setattr(get_settings(), "video_provider", "fake")
+    user = await admin(client, sessionmaker)
+    story = Story(
+        author_id=uuid.UUID(user["id"]),
+        title="A heritage story",
+        place_name="Madaba",
+        status="published",
+        published_at=datetime.now(UTC),
+    )
+    session.add(story)
+    await session.commit()
+    response = await client.post(
+        "/api/v1/staff/videos",
+        json={
+            "story_id": str(story.id),
+            "provider": "fake",
+            "model": "demo",
+            "prompt": "Slow camera movement",
+            "aspect_ratio": "16:9",
+            "seed": 7,
+        },
+    )
+    assert response.status_code == 202, response.text
+    return response.json()["id"]
+
+
+def slow_render(monkeypatch, polls_until_done: int | None):
+    """The fake provider says "running" this many times before the video is ready
+    (None: never ready). Returns the list of poll times."""
+    from app.providers.video import FakeVideo
+
+    calls: list[datetime] = []
+
+    async def poll(self, request):
+        calls.append(datetime.now(UTC))
+        if polls_until_done is None or len(calls) <= polls_until_done:
+            return {"status": "running"}
+        return {"status": "done", "video_url": "demo"}
+
+    monkeypatch.setattr(FakeVideo, "poll", poll)
+    return calls
+
+
+async def queued_jobs(session):
+    session.expire_all()
+    return (
+        (await session.execute(select(Job).where(Job.status == "queued").order_by(Job.created_at)))
+        .scalars()
+        .all()
+    )
+
+
+async def test_a_slow_video_frees_the_worker_between_checks(
+    client, session, sessionmaker, monkeypatch
+):
+    monkeypatch.setattr(get_settings(), "video_poll_seconds", 5)
+    calls = slow_render(monkeypatch, polls_until_done=2)
+    generation_id = await queue_preview(client, session, sessionmaker, monkeypatch)
+
+    assert await run_one(sessionmaker)  # submits and checks once: still running
+    assert len(calls) == 1
+    (check,) = await queued_jobs(session)
+    assert check.kind == "poll_video"
+    # The next check waits; nothing is ready to run, so the worker is free for other work.
+    assert check.run_after > datetime.now(UTC)
+    assert not await run_one(sessionmaker)
+    progress = (await client.get(f"/api/v1/staff/videos/{generation_id}")).json()
+    assert progress["status"] in ("queued", "running")
+
+    await drain(sessionmaker)
+    assert len(calls) == 3
+    done = (await client.get(f"/api/v1/staff/videos/{generation_id}")).json()
+    assert done["status"] == "done"
+    assert (await client.get(done["video_url"])).status_code == 200
+
+
+async def test_checks_stop_after_the_maximum_wait(client, session, sessionmaker, monkeypatch):
+    monkeypatch.setattr(get_settings(), "video_max_wait_seconds", 0)
+    slow_render(monkeypatch, polls_until_done=None)
+    generation_id = await queue_preview(client, session, sessionmaker, monkeypatch)
+    await drain(sessionmaker)
+    failed = (await client.get(f"/api/v1/staff/videos/{generation_id}")).json()
+    assert failed["status"] == "failed"
+    assert "still processing" in failed["error"]
+    assert await queued_jobs(session) == []
+    generation = await session.get(VideoGeneration, uuid.UUID(generation_id))
+    await session.refresh(generation)
+    assert generation.provider_request  # kept, so staff can follow it up
+
+
+async def test_a_check_is_never_charged_or_cached(client, session, sessionmaker, monkeypatch):
+    from app.models import ProviderCacheEntry
+
+    slow_render(monkeypatch, polls_until_done=1)
+    await queue_preview(client, session, sessionmaker, monkeypatch)
+    await drain(sessionmaker)
+    operations = (await session.execute(select(ProviderCacheEntry.operation))).scalars().all()
+    assert "video_status" not in operations

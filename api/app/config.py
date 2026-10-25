@@ -65,6 +65,8 @@ class Settings(BaseSettings):
     custom_video_estimate_usd: float = Field(0.0, ge=0)
     video_estimate_usd: float = Field(1.0, ge=0)
     video_poll_seconds: float = Field(3.0, ge=0.1, le=30)
+    # Checks on a submitted video stop after this long; the request ID is kept for staff.
+    video_max_wait_seconds: int = Field(1800, ge=0)
     # Azure OpenAI (#12): polishing, translation and moderation. The deployment is the name
     # given to the model in Azure AI Foundry. Prices are per million tokens for that model
     # (defaults: gpt-5.4-mini, Global Standard, docs/research/speech-voice-and-llm.md).

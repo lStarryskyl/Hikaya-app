@@ -426,3 +426,24 @@ async def test_a_missing_photo_fails_the_slideshow_instead_of_dropping_it(
     await drain(sessionmaker)
     steps = (await client.get(f"/api/v1/stories/{story_id}/pipeline")).json()["steps"]
     assert {s["step"]: s["status"] for s in steps}["slideshow"] == "failed"
+
+
+async def test_a_slideshow_is_remade_when_the_narration_returns_to_an_earlier_version(
+    client, sessionmaker, session, tone, pictures
+):
+    # A -> B -> A: the first slideshow job runs again; it must use the current narration
+    # file, not the one its first run used (that file was replaced and deleted).
+    await sign_up(client)
+    story_id = await story_with_photo(client, sessionmaker, tone, pictures)
+    await publish(client, sessionmaker, story_id)
+
+    async def source(value):
+        await client.patch(f"/api/v1/stories/{story_id}", json={"narration_source": value})
+
+    await resubmit_after(client, sessionmaker, session, story_id, lambda: source("msa"))
+    back = await resubmit_after(client, sessionmaker, session, story_id, lambda: source("polished"))
+    assert back["narration"]["source"] == "polished"
+    assert back["slideshow"] is not None
+    assert (await client.get(back["slideshow"]["url"])).status_code == 200
+    steps = (await client.get(f"/api/v1/stories/{story_id}/pipeline")).json()["steps"]
+    assert {s["step"]: s["status"] for s in steps}["slideshow"] == "done"

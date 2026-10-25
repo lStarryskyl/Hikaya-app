@@ -12,14 +12,28 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import audio, gateway, jobs
+from app import audio, gateway, jobs, media
 from app.auth import require_roles
 from app.config import get_settings
 from app.db import get_session, get_sessionmaker
 from app.errors import INTERNAL_PREFIX, UserFacingError
 from app.handlers import handler
-from app.models import Job, Role, User, VoiceClone
-from app.providers.voices import VoiceCloner
+from app.models import (
+    Asset,
+    AssetKind,
+    AuditAction,
+    AuditEvent,
+    Job,
+    JobStatus,
+    Narration,
+    ProviderCacheEntry,
+    Role,
+    Story,
+    StoryStatus,
+    User,
+    VoiceClone,
+)
+from app.providers.voices import VoiceCloner, unavailable_reason
 from app.storage import TooLarge, get_storage
 
 router = APIRouter(prefix="/staff/voices", tags=["voices"])
@@ -38,12 +52,48 @@ TEXT_AR = (
 )
 
 
+VOICE = "voice"  # audit target type
+VERIFY = (
+    "The provider asks the speaker to verify this voice before it can narrate. "
+    "Complete the verification with the speaker, then check again."
+)
+
+
+def state_of(voice: VoiceClone, job: Job | None) -> tuple[str, str | None]:
+    """preparing | ready | needs_verification | failed | revoked, with a message to show."""
+    if voice.revoked_at:
+        return "revoked", "This voice was revoked; its sample and narrations are deleted."
+    if job is None or job.status == JobStatus.FAILED:
+        error = job.error if job else None
+        if error and error.startswith(INTERNAL_PREFIX):
+            error = "Voice cloning failed. Please contact the demo administrator."
+        return "failed", error or "Voice cloning failed."
+    if job.status != JobStatus.DONE or not voice.provider_voice_id:
+        return "preparing", None
+    if voice.requires_verification:
+        return "needs_verification", VERIFY
+    return "ready", None
+
+
+async def ready_voice(session: AsyncSession, voice_id: uuid.UUID) -> VoiceClone | None:
+    """The voice when it can narrate now, else None."""
+    voice = await session.get(VoiceClone, voice_id)
+    if voice is None:
+        return None
+    job = await session.get(Job, voice.job_id) if voice.job_id else None
+    return voice if state_of(voice, job)[0] == "ready" else None
+
+
 async def output(session: AsyncSession, voice: VoiceClone) -> dict:
     job = await session.get(Job, voice.job_id) if voice.job_id else None
     error = job.error if job else None
     if error and error.startswith(INTERNAL_PREFIX):
         error = "Voice cloning failed. Please contact the demo administrator."
+    state, message = state_of(voice, job)
     return {
+        "state": state,
+        "message": message,
+        "revoked_at": voice.revoked_at.isoformat() if voice.revoked_at else None,
         "id": str(voice.id),
         "speaker_name": voice.speaker_name,
         "status": job.status if job else "failed",
@@ -65,6 +115,9 @@ async def statement(user: User = Depends(staff)) -> dict:
         "text_ar": TEXT_AR,
         "min_seconds": 30,
         "max_seconds": 60,
+        # Whether cloned voices can narrate with the current providers, and why not.
+        "available": unavailable_reason() is None,
+        "reason": unavailable_reason(),
     }
 
 
@@ -91,6 +144,8 @@ async def create_voice(
     user: User = Depends(staff),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    if reason := unavailable_reason():
+        raise HTTPException(409, reason)
     if consent_version != VERSION or not all((speaker_confirmed, rights_confirmed, use_confirmed)):
         raise HTTPException(422, "Agree to all parts of the current voice consent statement.")
     if locale not in {"en", "ar"} or not speaker_name.strip():
@@ -153,6 +208,15 @@ async def create_voice(
             job_id=job.id,
         )
         session.add(voice)
+        session.add(
+            AuditEvent(
+                actor_id=user.id,
+                action=AuditAction.VOICE_CREATED.value,
+                target_type=VOICE,
+                target_id=voice_id,
+                detail={"consent_version": VERSION},
+            )
+        )
         await session.commit()
         return await output(session, voice)
     except TooLarge as exc:
@@ -194,6 +258,8 @@ async def sample(
     voice_id: uuid.UUID, user: User = Depends(staff), session: AsyncSession = Depends(get_session)
 ) -> FileResponse:
     voice = await find_voice(session, voice_id)
+    if voice.revoked_at or not get_storage().exists(voice.sample_key):
+        raise HTTPException(404, "This sample was deleted.")
     return FileResponse(
         get_storage().path(voice.sample_key),
         media_type="audio/mpeg",
@@ -225,3 +291,94 @@ async def clone_job(payload: dict) -> dict:
         voice.requires_verification = result["requires_verification"]
         await session.commit()
         return result
+
+
+# --- revocation ---
+
+
+@router.post("/{voice_id}/revoke")
+async def revoke(
+    voice_id: uuid.UUID, user: User = Depends(staff), session: AsyncSession = Depends(get_session)
+) -> dict:
+    """Withdraw a voice: its sample, every narration made with it (and the slideshows that
+    carry them) and the cached speech in it are deleted at once; affected stories are
+    narrated again in the default voice; the provider's copy is deleted by a job."""
+    voice = await session.get(VoiceClone, voice_id, with_for_update=True)
+    if voice is None:
+        raise HTTPException(404, "Voice not found.")
+    if voice.revoked_at:
+        return await output(session, voice)
+    voice.revoked_at, voice.revoked_by = datetime.now(UTC), user.id
+
+    narrated = list(
+        (
+            await session.execute(select(Narration).where(Narration.voice_clone_id == voice.id))
+        ).scalars()
+    )
+    chosen = list(
+        (await session.execute(select(Story).where(Story.narrator_voice_id == voice.id))).scalars()
+    )
+    affected = {n.story_id for n in narrated} | {s.id for s in chosen}
+    for story in chosen:
+        story.narrator_voice_id = None
+    for narration in narrated:
+        await session.delete(narration)
+    files: list[str] = []
+    if affected:
+        old = (
+            await session.execute(
+                select(Asset).where(
+                    Asset.story_id.in_(affected),
+                    Asset.kind.in_([AssetKind.NARRATION.value, AssetKind.SLIDESHOW.value]),
+                )
+            )
+        ).scalars()
+        for asset in old:
+            files.append(asset.storage_key)
+            await session.delete(asset)
+    if voice.provider_voice_id:
+        cached = (
+            await session.execute(
+                select(ProviderCacheEntry).where(
+                    ProviderCacheEntry.operation == "speak",
+                    ProviderCacheEntry.result["voice"].astext == voice.provider_voice_id,
+                )
+            )
+        ).scalars()
+        for entry in cached:
+            if entry.file_key:
+                files.append(entry.file_key)
+            await session.delete(entry)
+        await jobs.enqueue(
+            session,
+            "voice_delete",
+            {"provider": voice.provider, "provider_voice_id": voice.provider_voice_id},
+            idempotency_key=f"voice-delete:{voice.id}",
+            commit=False,
+        )
+    await session.flush()
+    # Narrated again in the default voice; the slideshow follows the new narration.
+    for story_id in affected:
+        story = await session.get(Story, story_id)
+        if story is not None and story.status in (StoryStatus.PUBLISHED, StoryStatus.HELD):
+            await media.queue(session, story)
+    session.add(
+        AuditEvent(
+            actor_id=user.id,
+            action=AuditAction.VOICE_REVOKED.value,
+            target_type=VOICE,
+            target_id=voice.id,
+            detail={"stories": len(affected)},
+        )
+    )
+    await session.commit()
+    storage = get_storage()
+    await asyncio.to_thread(storage.delete, *files)
+    await asyncio.to_thread(storage.delete_tree, f"voices/{voice.id}")
+    return await output(session, voice)
+
+
+@handler("voice_delete")
+async def delete_job(payload: dict) -> dict:
+    await VoiceCloner(payload["provider"]).delete(payload["provider_voice_id"])
+    return {"deleted": payload["provider_voice_id"]}

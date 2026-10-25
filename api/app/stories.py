@@ -30,6 +30,7 @@ from app.models import (
     Story,
     StoryStatus,
     User,
+    VoiceClone,
 )
 from app.providers import MODERATION_LABELS
 from app.storage import LocalStorage, TooLarge, get_storage
@@ -91,6 +92,8 @@ class NarrationOut(BaseModel):
     timing: str
     # One per line of the text read, in the narration's own time.
     segments: list[SegmentOut]
+    # The consenting person whose cloned voice read it; None for the default voice.
+    narrated_by: str | None = None
 
 
 class MediaOut(BaseModel):
@@ -300,6 +303,11 @@ async def _narration_out(session: AsyncSession, story_id: uuid.UUID) -> Narratio
         source=row.source,
         timing=row.timing,
         segments=row.segments,
+        narrated_by=(
+            clone.speaker_name
+            if row.voice_clone_id and (clone := await session.get(VoiceClone, row.voice_clone_id))
+            else None
+        ),
     )
 
 

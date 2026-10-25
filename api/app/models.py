@@ -202,6 +202,10 @@ class Story(Base):
     status: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=StoryStatus.DRAFT.value
     )
+    # A consenting person's cloned voice chosen by staff to narrate this story (#18).
+    narrator_voice_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("voice_clones.id", ondelete="SET NULL")
+    )
     # A pre-made AI video sample shown on this story to premium members (#19); seeded only.
     ai_video_sample: Mapped[str | None] = mapped_column(Text)
     # Which text the narration reads: the polished text, or the MSA translation.
@@ -491,6 +495,10 @@ class Narration(Base):
     timing: Mapped[str] = mapped_column(Text, nullable=False)
     segments: Mapped[list] = mapped_column(JSONB, nullable=False)
     input_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    # Set when a cloned voice read it; the player credits the person.
+    voice_clone_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("voice_clones.id", ondelete="SET NULL")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -503,6 +511,9 @@ class AuditAction(StrEnum):
     DISMISS = "dismiss"
     UNCURATE = "uncurate"
     PLAN_RESET = "plan_reset"
+    VOICE_CREATED = "voice_created"
+    VOICE_REVOKED = "voice_revoked"
+    NARRATION_REGENERATED = "narration_regenerated"
 
 
 class AuditEvent(Base):
@@ -546,6 +557,11 @@ class VoiceClone(Base):
     provider_voice_id: Mapped[str | None] = mapped_column(Text)
     requires_verification: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     submitted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Revoked: the sample, every narration made with it and the provider voice are deleted.
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
     job_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL")
     )

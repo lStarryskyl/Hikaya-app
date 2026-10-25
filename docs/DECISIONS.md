@@ -158,6 +158,12 @@ These exist on purpose while the build is in progress. Each closes with the tick
 - Two seeded stories (Petra and the Red Desert) carry one of the pre-made AI video samples when its file is installed. Visitors and free members see the poster with an upgrade prompt; premium members and staff can watch it, and the video route itself still refuses anyone else. Each sample is labelled for what it is: a clip from a model's demonstration reel, credited, not made from that story.
 - Staff can put a member back on the free plan from the staff page (by email), for example after a demo checkout. The reset is audited with the plan it replaced, and the log names the member.
 
+## Cloned voices
+
+- A voice is preparing, ready, needs the speaker's verification (when the provider asks), failed (with the provider's message) or revoked. Cloning is refused, with the reason, when narration uses a provider that cannot read with a cloned voice (Azure), or when ElevenLabs narration would be given a clone made elsewhere.
+- Staff choose a ready voice to narrate a story that is not their own, or go back to the default voice. The narration is made again and the slideshow follows; the player says "Narrated in the voice of <name>". Creating a voice, revoking it and choosing a narrator are audited.
+- Revoking a voice deletes, at once, its sample, every narration made with it, the slideshows that carry them and the cached speech in that voice; affected stories are narrated again in the default voice. Deleting the provider's copy runs as a job (never inside a web request) and an already-deleted voice counts as done. A narration that finishes after its voice was revoked is discarded.
+
 ## Narration and slideshow
 
 - Narration starts when the member submits, alongside the moderation check, so reviewers hear held stories too and no voice credit goes on drafts. (The spec said "once the text is ready"; changed on 2026-10-23 with the owner's agreement.) The story is published without waiting for either; the player shows what exists, and the author and staff see their progress there, with a retry for a failed one in any status.

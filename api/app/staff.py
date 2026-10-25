@@ -15,12 +15,21 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app import discover, stories
+from app import discover, media, stories, voices
 from app.auth import require_roles
 from app.config import get_settings
 from app.db import get_session
 from app.gateway import counted, ledger_total, since_midnight
-from app.models import AuditAction, AuditEvent, Role, SpendEntry, Story, StoryStatus, User
+from app.models import (
+    AuditAction,
+    AuditEvent,
+    Role,
+    SpendEntry,
+    Story,
+    StoryStatus,
+    User,
+    VoiceClone,
+)
 
 router = APIRouter(prefix="/staff", tags=["staff"])
 
@@ -51,6 +60,11 @@ class ReviewPage(BaseModel):
 
 class RejectIn(BaseModel):
     note: str | None = Field(default=None, max_length=2000)
+
+
+class NarratorIn(BaseModel):
+    # A ready cloned voice, or None for the default narration voice.
+    voice_id: uuid.UUID | None = None
 
 
 class PlanResetIn(BaseModel):
@@ -260,6 +274,44 @@ async def uncurate(
     return await _audit_and_commit(session, story, user, AuditAction.UNCURATE)
 
 
+# --- narration in a cloned voice ---
+
+
+@router.put("/stories/{story_id}/narrator", status_code=202)
+async def choose_narrator(
+    story_id: str,
+    body: NarratorIn,
+    user: User = Depends(staff_only),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Narrate a story in a consenting person's ready cloned voice (or the default voice
+    again). The narration is made anew; its slideshow follows."""
+    story = await _story_for_action(session, story_id, user)
+    _require(
+        story.status in (StoryStatus.PUBLISHED, StoryStatus.HELD, StoryStatus.MODERATING),
+        "A story is narrated once it has been submitted.",
+    )
+    speaker = None
+    if body.voice_id is not None:
+        voice = await voices.ready_voice(session, body.voice_id)
+        _require(voice is not None, "Only a ready, unrevoked voice can narrate a story.")
+        speaker = voice.speaker_name
+    story.narrator_voice_id = body.voice_id
+    await session.flush()
+    await media.queue(session, story)
+    session.add(
+        AuditEvent(
+            actor_id=user.id,
+            action=AuditAction.NARRATION_REGENERATED.value,
+            target_type=STORY,
+            target_id=story.id,
+            detail={"voice_id": str(body.voice_id) if body.voice_id else None, "speaker": speaker},
+        )
+    )
+    await session.commit()
+    return {"id": str(story.id), "narrator": speaker}
+
+
 # --- members ---
 
 
@@ -305,13 +357,17 @@ async def audit_log(
     member = aliased(User)
     rows = (
         await session.execute(
-            select(AuditEvent, User, Story, member)
+            select(AuditEvent, User, Story, member, VoiceClone)
             .outerjoin(User, User.id == AuditEvent.actor_id)
             .outerjoin(
                 Story, (AuditEvent.target_type == STORY) & (Story.id == AuditEvent.target_id)
             )
             .outerjoin(
                 member, (AuditEvent.target_type == MEMBER) & (member.id == AuditEvent.target_id)
+            )
+            .outerjoin(
+                VoiceClone,
+                (AuditEvent.target_type == voices.VOICE) & (VoiceClone.id == AuditEvent.target_id),
             )
             .order_by(AuditEvent.created_at.desc())
             .limit(AUDIT_LIMIT)
@@ -325,12 +381,20 @@ async def audit_log(
             target=TargetOut(
                 type=event.target_type,
                 id=event.target_id,
-                title=story.title if story else target.display_name if target else None,
+                title=(
+                    story.title
+                    if story
+                    else target.display_name
+                    if target
+                    else voice.speaker_name
+                    if voice
+                    else None
+                ),
             ),
             detail=event.detail,
             at=event.created_at,
         )
-        for event, actor, story, target in rows
+        for event, actor, story, target, voice in rows
     ]
 
 

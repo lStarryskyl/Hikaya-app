@@ -22,7 +22,7 @@ import { initials } from '../auth'
 import Photo from '../components/Photo'
 import { getFeed, getPlaces, type Photo as PhotoData } from '../discover'
 import Avatar from '../components/Avatar'
-import { engagementFor, mockAvatarUrl, sampleReflections } from '../demo/mockEngagement'
+import { engagementFor, sampleReflections } from '../demo/mockEngagement'
 import {
   CATEGORY_LABELS,
   LANGUAGE_LABELS,
@@ -532,7 +532,7 @@ function Player({
             {sampleReflections.map((c) => (
               <Card key={c.name} className="p-4">
                 <div className="flex items-center gap-2 mb-2">
-                  <Avatar src={mockAvatarUrl(c.avatarSeed, 60)} name={c.name} className="h-8 w-8" />
+                  <Avatar name={c.name} className="h-8 w-8" />
                   <div>
                     <div className="text-[12px] font-semibold">{c.name}</div>
                     <div className="text-[10px] text-muted">{c.timeAgo}</div>

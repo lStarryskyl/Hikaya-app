@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     stt_provider: str = "fake"
     tts_provider: str = "fake"
     llm_provider: str = "fake"
-    video_provider: str = "fal"
+    video_provider: str = "fake"
     fal_key: str = ""
     higgsfield_key_id: str = ""
     higgsfield_key_secret: str = ""
@@ -64,6 +64,9 @@ class Settings(BaseSettings):
     custom_video_token: str = ""
     custom_video_estimate_usd: float = Field(0.0, ge=0)
     video_estimate_usd: float = Field(1.0, ge=0)
+    # Price per second of generated video for the chosen model; 0 uses VIDEO_ESTIMATE_USD
+    # as a flat price per video instead.
+    video_usd_per_second: float = Field(0.0, ge=0)
     video_poll_seconds: float = Field(3.0, ge=0.1, le=30)
     # Checks on a submitted video stop after this long; the request ID is kept for staff.
     video_max_wait_seconds: int = Field(1800, ge=0)

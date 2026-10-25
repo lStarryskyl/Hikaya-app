@@ -164,6 +164,12 @@ These exist on purpose while the build is in progress. Each closes with the tick
 - Staff choose a ready voice to narrate a story that is not their own, or go back to the default voice. The narration is made again and the slideshow follows; the player says "Narrated in the voice of <name>". Creating a voice, revoking it and choosing a narrator are audited.
 - Revoking a voice deletes, at once, its sample, every narration made with it, the slideshows that carry them and the cached speech in that voice; affected stories are narrated again in the default voice. Deleting the provider's copy runs as a job (never inside a web request) and an already-deleted voice counts as done. A narration that finishes after its voice was revoked is discarded.
 
+- Two provider calls deliberately bypass the gateway because they cost nothing and must not be blocked by the live-AI switch: checking a submitted video's status, and deleting a revoked voice at the provider (privacy comes first). Both run in jobs, never in a web request.
+- A provider's own cost for a call stands even when the answer is then refused as unusable (Azure bills the tokens it used); the ledger counts it rather than releasing the reservation.
+- A narration queued in a cloned voice checks the voice before speaking, so nothing is paid for in a revoked voice; speech made while the voice was being revoked is deleted with it. A cloned narrator is only used while the narration provider can read with it.
+- When ElevenLabs asks the speaker to verify a cloned voice, staff confirm on the staff page once the speaker has done it there; the confirmation is audited.
+- Video checks stop `VIDEO_MAX_WAIT_SECONDS` after the video was queued, however often a job is retried; a video that is ready but fails to download is fetched again on the next check. Video cost can be set per second (`VIDEO_USD_PER_SECOND`) or as a flat price per video.
+
 ## Narration and slideshow
 
 - Narration starts when the member submits, alongside the moderation check, so reviewers hear held stories too and no voice credit goes on drafts. (The spec said "once the text is ready"; changed on 2026-10-23 with the owner's agreement.) The story is published without waiting for either; the player shows what exists, and the author and staff see their progress there, with a retry for a failed one in any status.

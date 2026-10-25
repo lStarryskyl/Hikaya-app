@@ -2,7 +2,14 @@ import { useEffect, useRef, useState } from 'react'
 import Recorder from './Recorder'
 import { ApiError } from '../api'
 import { t, useLocale } from '../i18n'
-import { cloneVoice, getVoiceConsent, getVoices, revokeVoice, type VoiceClone } from '../voices'
+import {
+  cloneVoice,
+  getVoiceConsent,
+  getVoices,
+  markVerified,
+  revokeVoice,
+  type VoiceClone,
+} from '../voices'
 import { useApi } from '../useApi'
 
 export default function VoiceClonePanel() {
@@ -146,6 +153,25 @@ export default function VoiceClonePanel() {
               >
                 {t(voice.message)}
               </p>
+            )}
+            {voice.state === 'needs_verification' && (
+              <button
+                type="button"
+                onClick={async () => {
+                  setError('')
+                  try {
+                    await markVerified(voice.id)
+                    setRevision((r) => r + 1)
+                  } catch (e) {
+                    setError(
+                      e instanceof ApiError ? e.message : t('That did not work. Please try again.'),
+                    )
+                  }
+                }}
+                className="me-4 mt-2 text-xs font-semibold text-teal hover:underline"
+              >
+                {t('The speaker has verified it')}
+              </button>
             )}
             {voice.state !== 'revoked' && (
               <button

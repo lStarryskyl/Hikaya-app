@@ -25,7 +25,8 @@ export default function StaffNarrator({
     user.id !== story.author.id &&
     ['published', 'held', 'moderating'].includes(story.status)
   const voices = useApi(() => (allowed ? getVoices() : Promise.resolve([])), [allowed])
-  const [choice, setChoice] = useState('')
+  // Starts on the story's current narrator, so saving it unchanged changes nothing.
+  const [choice, setChoice] = useState(story.narrator_voice_id ?? '')
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState('')
   const [error, setError] = useState('')

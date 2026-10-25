@@ -57,3 +57,7 @@ export const chooseNarrator = (storyId: string, voiceId: string | null) =>
     method: 'PUT',
     body: { voice_id: voiceId },
   })
+
+/** Staff confirm the speaker completed the provider's verification step. */
+export const markVerified = (id: string) =>
+  api<VoiceClone>(`/staff/voices/${id}/verified`, { method: 'POST' })

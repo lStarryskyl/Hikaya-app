@@ -47,6 +47,14 @@ async def download_video(url: str, hosts: tuple[str, ...], headers: dict | None 
     return bytes(data)
 
 
+def video_cost(seconds: int) -> Decimal:
+    """Per second of video when VIDEO_USD_PER_SECOND is set, else the flat VIDEO_ESTIMATE_USD."""
+    settings = get_settings()
+    if settings.video_usd_per_second > 0:
+        return Decimal(str(settings.video_usd_per_second)) * Decimal(seconds)
+    return Decimal(str(settings.video_estimate_usd))
+
+
 class FakeVideo:
     name = "fake"
     budget = None
@@ -69,7 +77,7 @@ class FalVideo:
     budget = "card"
 
     def estimate_usd(self, operation: str, units: int) -> Decimal:
-        return Decimal(str(get_settings().video_estimate_usd))
+        return video_cost(units)
 
     @property
     def headers(self) -> dict:

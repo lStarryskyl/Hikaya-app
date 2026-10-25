@@ -26,7 +26,6 @@ from app.models import (
     Job,
     JobStatus,
     Narration,
-    ProviderCacheEntry,
     Role,
     Story,
     StoryStatus,
@@ -293,6 +292,34 @@ async def clone_job(payload: dict) -> dict:
         return result
 
 
+# --- verification ---
+
+
+@router.post("/{voice_id}/verified")
+async def mark_verified(
+    voice_id: uuid.UUID, user: User = Depends(staff), session: AsyncSession = Depends(get_session)
+) -> dict:
+    """The provider asked the speaker to verify the voice; staff confirm it was done there.
+    (The provider's own verification happens with the speaker, outside this app.)"""
+    voice = await session.get(VoiceClone, voice_id, with_for_update=True)
+    if voice is None:
+        raise HTTPException(404, "Voice not found.")
+    job = await session.get(Job, voice.job_id) if voice.job_id else None
+    if state_of(voice, job)[0] != "needs_verification":
+        raise HTTPException(409, "This voice is not waiting for verification.")
+    voice.requires_verification = False
+    session.add(
+        AuditEvent(
+            actor_id=user.id,
+            action=AuditAction.VOICE_VERIFIED.value,
+            target_type=VOICE,
+            target_id=voice.id,
+        )
+    )
+    await session.commit()
+    return await output(session, voice)
+
+
 # --- revocation ---
 
 
@@ -337,18 +364,7 @@ async def revoke(
             files.append(asset.storage_key)
             await session.delete(asset)
     if voice.provider_voice_id:
-        cached = (
-            await session.execute(
-                select(ProviderCacheEntry).where(
-                    ProviderCacheEntry.operation == "speak",
-                    ProviderCacheEntry.result["voice"].astext == voice.provider_voice_id,
-                )
-            )
-        ).scalars()
-        for entry in cached:
-            if entry.file_key:
-                files.append(entry.file_key)
-            await session.delete(entry)
+        files += await media.purge_speech(session, voice.provider_voice_id)
         await jobs.enqueue(
             session,
             "voice_delete",
@@ -360,7 +376,11 @@ async def revoke(
     # Narrated again in the default voice; the slideshow follows the new narration.
     for story_id in affected:
         story = await session.get(Story, story_id)
-        if story is not None and story.status in (StoryStatus.PUBLISHED, StoryStatus.HELD):
+        if story is not None and story.status in (
+            StoryStatus.MODERATING,
+            StoryStatus.PUBLISHED,
+            StoryStatus.HELD,
+        ):
             await media.queue(session, story)
     session.add(
         AuditEvent(

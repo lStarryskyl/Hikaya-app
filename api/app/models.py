@@ -514,6 +514,7 @@ class AuditAction(StrEnum):
     VOICE_CREATED = "voice_created"
     VOICE_REVOKED = "voice_revoked"
     NARRATION_REGENERATED = "narration_regenerated"
+    VOICE_VERIFIED = "voice_verified"
 
 
 class AuditEvent(Base):

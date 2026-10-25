@@ -148,10 +148,15 @@ class ElevenLabsTextToSpeech:
             raise _unexpected(self.service) from exc
         if not mp3 or "".join(characters) != text or not len(starts) == len(ends) == len(text):
             raise _unexpected(self.service)
-        timings, at = [], 0
+        timings, at, previous_end = [], 0, 0
         for line in part:
-            first, last = at, at + len(line) - 1
-            timings.append((round(starts[first] * 1000), round(ends[last] * 1000)))
+            if line:
+                first, last = at, at + len(line) - 1
+                timings.append((round(starts[first] * 1000), round(ends[last] * 1000)))
+                previous_end = timings[-1][1]
+            else:
+                # Nothing to say: a zero-length line where the last one ended.
+                timings.append((previous_end, previous_end))
             at += len(line) + len(SEPARATOR)
         return mp3, timings
 

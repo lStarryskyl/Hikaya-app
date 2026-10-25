@@ -137,4 +137,8 @@ def text_to_speech() -> TextToSpeech:
     name = get_settings().tts_provider
     if name == "fake":
         return fake.FakeTextToSpeech()
+    if name in ("elevenlabs", "azure"):
+        from app.providers.tts import AzureTextToSpeech, ElevenLabsTextToSpeech
+
+        return ElevenLabsTextToSpeech() if name == "elevenlabs" else AzureTextToSpeech()
     raise _not_connected("voice", name)

@@ -217,6 +217,19 @@ class Story(Base):
     __table_args__ = (
         Index("ix_stories_status_published_at", "status", "published_at"),
         Index("ix_stories_author_id", "author_id"),
+        # Full-text search (app/search.py, migration 0015).
+        *(
+            Index(
+                f"ix_stories_search_{cfg}",
+                # Owned by migration 0015; autogenerate skips it (migrations/env.py).
+                text(
+                    f"to_tsvector('{cfg}'::regconfig, ((COALESCE(title, ''::text) "
+                    "|| ' '::text) || COALESCE(place_name, ''::text)))"
+                ),
+                postgresql_using="gin",
+            )
+            for cfg in ("arabic", "english")
+        ),
         CheckConstraint(
             "status IN ('draft', 'moderating', 'published', 'held', 'needs_edit')",
             name="ck_stories_status",
@@ -292,6 +305,15 @@ class TextLayer(Base):
 
     __table_args__ = (
         UniqueConstraint("story_id", "kind", name="uq_text_layers_story_kind"),
+        # Full-text search over the segment texts (app/search.py, migration 0015).
+        *(
+            Index(
+                f"ix_text_layers_search_{cfg}",
+                text(f"jsonb_to_tsvector('{cfg}'::regconfig, segments, '[\"string\"]'::jsonb)"),
+                postgresql_using="gin",
+            )
+            for cfg in ("arabic", "english")
+        ),
         CheckConstraint(
             "kind IN ('verbatim', 'polished', 'translation_en', 'translation_msa')",
             name="ck_text_layers_kind",

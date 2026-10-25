@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy import Text, cast, column, func, or_, select, true, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import search
 from app.db import get_session
 from app.models import Category, Place, PlacePhoto, Story, StoryStatus, TextLayer, User
 from app.photos import covers_for
@@ -211,12 +212,20 @@ class DiscoveryFilters:
                 )
                 .exists()
             )
+            # Other word forms too (Arabic and English stemming), on indexed columns.
+            layer_words = (
+                select(1)
+                .where(TextLayer.story_id == Story.id, search.layer_matches(self.q))
+                .exists()
+            )
             query = query.where(
                 or_(
                     Story.title.icontains(self.q, autoescape=True),
                     Story.place_name.icontains(self.q, autoescape=True),
                     author_match,
                     text_match,
+                    search.story_matches(self.q),
+                    layer_words,
                 )
             )
         if self.latitude is not None:

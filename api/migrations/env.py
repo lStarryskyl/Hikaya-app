@@ -13,6 +13,16 @@ from app.models import Base
 target_metadata = Base.metadata
 
 
+def include_object(obj, name, type_, reflected, compare_to) -> bool:
+    """Leave the full-text search indexes out of autogenerate comparisons: they are
+    expression indexes, which Alembic cannot compare reliably. Migration 0015 owns them."""
+    return not (
+        type_ == "index"
+        and name
+        and name.startswith(("ix_stories_search_", "ix_text_layers_search_"))
+    )
+
+
 def run_migrations_offline() -> None:
     context.configure(
         url=get_settings().database_url,
@@ -25,7 +35,9 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
+    context.configure(
+        connection=connection, target_metadata=target_metadata, include_object=include_object
+    )
     with context.begin_transaction():
         context.run_migrations()
 

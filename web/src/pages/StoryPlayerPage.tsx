@@ -1,5 +1,5 @@
 import { captions } from '../captions'
-import { t, useLocale } from '../i18n'
+import { message, t, useLocale } from '../i18n'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
@@ -17,6 +17,7 @@ import { Badge, Card, PillButton } from '../components/ui'
 import TranscriptView from '../components/TranscriptView'
 import StoryStatusBanner from '../components/StoryStatusBanner'
 import MediaProgress from '../components/MediaProgress'
+import StaffNarrator from '../components/StaffNarrator'
 import { ApiError } from '../api'
 import { initials } from '../auth'
 import Photo from '../components/Photo'
@@ -167,6 +168,8 @@ function Player({
   const resumeAt = useRef<{ seconds: number; play: boolean } | null>(null)
   // The slideshow carries the narration, so while it plays the lines follow its timings.
   const [videoPlaying, setVideoPlaying] = useState(false)
+  // Bumped when staff ask for a new narration, so the progress card looks again.
+  const [mediaRound, setMediaRound] = useState(0)
   const [videoTime, setVideoTime] = useState(0)
   const [tab, setTab] = useState<'transcript' | 'accessibility'>('transcript')
   const [playing, setPlaying] = useState(false)
@@ -290,7 +293,7 @@ function Player({
       </div>
 
       <StoryStatusBanner story={story.record} onChange={onStoryChange} />
-      <MediaProgress story={story.record} onChange={onStoryChange} />
+      <MediaProgress key={mediaRound} story={story.record} onChange={onStoryChange} />
 
       <div className="grid lg:grid-cols-[minmax(0,1fr)_340px] gap-6">
         <div>
@@ -416,6 +419,14 @@ function Player({
                   LAYER_LABELS[story.narration.source === 'msa' ? 'translation_msa' : 'polished'],
                 )}{' '}
                 {t('text.')}
+                {story.narration.narrated_by && (
+                  <>
+                    {' '}
+                    {message('Narrated in the voice of {name}.', {
+                      name: story.narration.narrated_by,
+                    })}
+                  </>
+                )}
               </p>
             )}
             {!canPlay && (
@@ -426,6 +437,8 @@ function Player({
               </p>
             )}
           </Card>
+
+          <StaffNarrator story={story.record} onQueued={() => setMediaRound((r) => r + 1)} />
 
           {story.record.ai_video && (
             <div className="mb-6">

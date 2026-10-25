@@ -34,6 +34,7 @@ from app.models import (
     NarrationTiming,
     PipelineStep,
     Story,
+    VoiceClone,
 )
 from app.pipeline import (
     MEDIA_STEPS,
@@ -85,12 +86,19 @@ async def _queue_narration(session: AsyncSession, story: Story) -> None:
     if layer is None:
         return
     texts = [s["text"] for s in layer.segments]
+    clone = None
+    if story.narrator_voice_id:
+        from app.voices import ready_voice  # voices imports this module
+
+        # A cloned voice chosen by staff, while it is ready and not revoked.
+        clone = await ready_voice(session, story.narrator_voice_id)
     input_hash = step_hash(
         NARRATE,
         get_settings().tts_provider,
         story.narration_source,
         layer.language,
         json.dumps(texts, ensure_ascii=False),
+        str(clone.id) if clone else "default",
     )
     await queue_step(
         session,
@@ -101,6 +109,8 @@ async def _queue_narration(session: AsyncSession, story: Story) -> None:
         source=story.narration_source,
         language=layer.language,
         texts=texts,
+        voice=clone.provider_voice_id if clone else None,
+        voice_clone_id=str(clone.id) if clone else None,
     )
 
 
@@ -123,8 +133,6 @@ async def _queue_slideshow(session: AsyncSession, story: Story) -> None:
         kind=SLIDESHOW,
         input_hash=input_hash,
         images=images,
-        audio=sound.storage_key,
-        duration_ms=narration.segments[-1]["end_ms"] if narration.segments else 0,
     )
 
 
@@ -225,7 +233,8 @@ async def _speak(
     async def run() -> tuple[dict, bytes]:
         speech = await tts.speak(texts, language, voice)
         lines = [list(line) for line in speech.lines] if speech.lines else None
-        return {"lines": lines}, speech.audio
+        # The voice is kept with the result, so revoking a cloned voice can find its speech.
+        return {"lines": lines, "voice": voice}, speech.audio
 
     parts = (language, voice, json.dumps(texts, ensure_ascii=False))
     result, key = await gateway.call_file(
@@ -242,7 +251,8 @@ async def narrate(payload: dict) -> dict:
             return STALE
     texts, language = payload["texts"], payload["language"]
     tts = text_to_speech()
-    voice = tts.voice_for(language)
+    voice = payload.get("voice") or tts.voice_for(language)
+    clone_id = uuid.UUID(payload["voice_clone_id"]) if payload.get("voice_clone_id") else None
     storage = get_storage()
     key = _new_key(story_id, "narration", ".mp3")
 
@@ -277,6 +287,10 @@ async def narrate(payload: dict) -> dict:
     async with get_sessionmaker()() as session:
         if not await is_current(session, payload, lock=True):
             return await _discard(story_id, key)
+        if clone_id is not None:
+            clone = await session.get(VoiceClone, clone_id, with_for_update=True)
+            if clone is None or clone.revoked_at is not None:
+                return await _discard(story_id, key)  # revoked while this ran
         story = await session.get(Story, story_id)
         asset = await _save_asset(session, story_id, AssetKind.NARRATION, key, MP3)
         row = await session.get(Narration, story_id)
@@ -286,6 +300,7 @@ async def narrate(payload: dict) -> dict:
         row.asset_id, row.provider, row.voice = asset.id, tts.name, voice
         row.language, row.source, row.timing = language, payload["source"], timing.value
         row.segments, row.input_hash = segments, payload["input_hash"]
+        row.voice_clone_id = clone_id
         # Point the narration at the new file before the old files go (they cascade to it).
         await session.flush()
         old_keys = await _drop_assets(session, story_id, AssetKind.NARRATION, keep=asset)
@@ -332,13 +347,23 @@ async def slideshow(payload: dict) -> dict:
     async with get_sessionmaker()() as session:
         if not await is_current(session, payload):
             return STALE
+        # The narration's file is looked up now, not taken from the payload: a job that is
+        # run again for the same input (A -> B -> A) keeps its first payload, but each
+        # narration is stored under a new name. The step's input hash already guarantees
+        # it is the same narration.
+        narration = await session.get(Narration, story_id)
+        sound_asset = await session.get(Asset, narration.asset_id) if narration else None
+        if narration is None or sound_asset is None:
+            return STALE  # the narration is being made again; it queues the slideshow
+        sound_key = sound_asset.storage_key
+        seconds_ms = narration.segments[-1]["end_ms"] if narration.segments else 0
     storage = get_storage()
     # A missing file fails the step rather than quietly making a different slideshow.
-    if not all(storage.exists(k) for k in [*payload["images"], payload["audio"]]):
+    if not all(storage.exists(k) for k in [*payload["images"], sound_key]):
         raise UserFacingError("A photo or the narration for the slideshow is missing.")
     images = [storage.path(k) for k in payload["images"]]
-    sound = storage.path(payload["audio"])
-    seconds = (payload["duration_ms"] or await audio.duration_ms(sound)) / 1000
+    sound = storage.path(sound_key)
+    seconds = (seconds_ms or await audio.duration_ms(sound)) / 1000
     key = _new_key(story_id, "slideshow", ".mp4")
     await _render(
         key, *_inputs("webp_pipe", images), *_inputs("mp3", [sound]),

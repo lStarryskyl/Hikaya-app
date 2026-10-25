@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import Recorder from './Recorder'
 import { ApiError } from '../api'
 import { t, useLocale } from '../i18n'
-import { cloneVoice, getVoiceConsent, getVoices } from '../voices'
+import { cloneVoice, getVoiceConsent, getVoices, revokeVoice, type VoiceClone } from '../voices'
 import { useApi } from '../useApi'
 
 export default function VoiceClonePanel() {
@@ -20,9 +20,27 @@ export default function VoiceClonePanel() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const requestId = useRef(crypto.randomUUID())
-  const pending = voices.data?.some(
-    (voice) => voice.status === 'queued' || voice.status === 'running',
-  )
+  const pending = voices.data?.some((voice) => voice.state === 'preparing')
+  // Revoking deletes a person's voice everywhere, so it asks twice.
+  const [confirming, setConfirming] = useState<string | null>(null)
+  const [revoking, setRevoking] = useState<string | null>(null)
+  async function revoke(voice: VoiceClone) {
+    if (confirming !== voice.id) {
+      setConfirming(voice.id)
+      return
+    }
+    setRevoking(voice.id)
+    setError('')
+    try {
+      await revokeVoice(voice.id)
+      setRevision((r) => r + 1)
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : t('That did not work. Please try again.'))
+    } finally {
+      setRevoking(null)
+      setConfirming(null)
+    }
+  }
   useEffect(() => {
     if (!pending) return
     const timer = window.setInterval(() => setRevision((r) => r + 1), 1500)
@@ -84,12 +102,20 @@ export default function VoiceClonePanel() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        disabled={consent.loading || !!consent.error}
+        disabled={consent.loading || !!consent.error || consent.data?.available === false}
         className="rounded-full bg-terracotta px-4 py-2 text-cream disabled:opacity-50"
       >
         {t('Create a voice clone')}
       </button>
+      {consent.data && !consent.data.available && consent.data.reason && (
+        <p className="mt-2 text-sm text-terracotta-dark">{t(consent.data.reason)}</p>
+      )}
       {(voices.error || consent.error) && <p role="alert">{voices.error || consent.error}</p>}
+      {error && !open && (
+        <p role="alert" className="mt-2 text-sm text-terracotta-dark">
+          {error}
+        </p>
+      )}
       <ul className="mt-4 space-y-3">
         {voices.data?.map((voice) => (
           <li key={voice.id} className="rounded-lg bg-cream p-3 text-sm">
@@ -98,23 +124,43 @@ export default function VoiceClonePanel() {
             </span>{' '}
             ·{' '}
             {t(
-              voice.status === 'done'
+              voice.state === 'ready'
                 ? voice.demo
                   ? 'Demo clone ready (no synthetic voice was created)'
-                  : voice.requires_verification
-                    ? 'Provider verification required'
-                    : 'Voice ready'
-                : voice.status === 'failed'
-                  ? 'Voice cloning failed'
-                  : 'Cloning in progress…',
+                  : 'Voice ready'
+                : voice.state === 'needs_verification'
+                  ? 'Provider verification required'
+                  : voice.state === 'failed'
+                    ? 'Voice cloning failed'
+                    : voice.state === 'revoked'
+                      ? 'Revoked'
+                      : 'Cloning in progress…',
             )}
             <p className="mt-1 text-xs text-muted2">
               {t('Consent saved')}: {new Date(voice.consent.at).toLocaleString(locale)}
             </p>
-            {voice.error && (
-              <p role="alert" className="mt-2 text-terracotta-dark">
-                {t(voice.error)}
+            {voice.message && (
+              <p
+                role={voice.state === 'failed' ? 'alert' : undefined}
+                className="mt-2 text-terracotta-dark"
+              >
+                {t(voice.message)}
               </p>
+            )}
+            {voice.state !== 'revoked' && (
+              <button
+                type="button"
+                onClick={() => void revoke(voice)}
+                disabled={revoking !== null}
+                aria-label={`${t('Revoke voice')}: ${voice.speaker_name}`}
+                className="mt-2 text-xs font-semibold text-terracotta-dark hover:underline disabled:opacity-50"
+              >
+                {revoking === voice.id
+                  ? t('Revoking…')
+                  : confirming === voice.id
+                    ? t('Revoke and delete its sample and narrations? Click again')
+                    : t('Revoke voice')}
+              </button>
             )}
           </li>
         ))}

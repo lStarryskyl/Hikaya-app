@@ -5,11 +5,20 @@ export interface VoiceConsent {
   text_ar: string
   min_seconds: number
   max_seconds: number
+  /** Whether cloned voices can narrate with the current providers, and why not. */
+  available: boolean
+  reason: string | null
 }
+
+export type VoiceState = 'preparing' | 'ready' | 'needs_verification' | 'failed' | 'revoked'
 export interface VoiceClone {
   id: string
   speaker_name: string
   status: 'queued' | 'running' | 'done' | 'failed'
+  state: VoiceState
+  /** What to tell staff about the state (a provider's message, a verification step). */
+  message: string | null
+  revoked_at: string | null
   error: string | null
   demo: boolean
   requires_verification: boolean
@@ -37,3 +46,14 @@ export function cloneVoice(
   form.append('request_id', requestId)
   return api<VoiceClone>('/staff/voices', { form })
 }
+
+/** Withdraw a voice: its sample, narrations and cached speech are deleted. */
+export const revokeVoice = (id: string) =>
+  api<VoiceClone>(`/staff/voices/${id}/revoke`, { method: 'POST' })
+
+/** Narrate a story in a ready cloned voice, or in the default voice again (null). */
+export const chooseNarrator = (storyId: string, voiceId: string | null) =>
+  api<{ id: string; narrator: string | null }>(`/staff/stories/${storyId}/narrator`, {
+    method: 'PUT',
+    body: { voice_id: voiceId },
+  })

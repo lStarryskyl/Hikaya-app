@@ -38,6 +38,8 @@ export interface Narration {
   timing: 'alignment' | 'per_segment'
   /** One per line of the text read, in the narration's own time. */
   segments: Segment[]
+  /** The consenting person whose cloned voice read it; null for the default voice. */
+  narrated_by?: string | null
 }
 
 export interface PipelineStep {

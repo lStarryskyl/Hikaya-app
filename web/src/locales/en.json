@@ -523,5 +523,18 @@
   "common.reset_to_free": "Reset to free",
   "common.email_is_back_on_the_free_plan": "{email} is back on the free plan.",
   "common.reset_a_member_s_plan_to_free": "reset a member's plan to free",
-  "common.description": "Description"
+  "common.description": "Description",
+  "common.revoked": "Revoked",
+  "common.revoke_voice": "Revoke voice",
+  "common.revoking": "Revoking…",
+  "common.revoke_and_delete_its_sample_and_narrations_click_again": "Revoke and delete its sample and narrations? Click again",
+  "common.narrator_voice_staff": "Narrator voice (staff)",
+  "common.default_voice": "Default voice",
+  "common.narrate_again": "Narrate again",
+  "common.the_narration_is_being_made_again": "The narration is being made again.",
+  "common.narrated_in_the_voice_of_name": "Narrated in the voice of {name}.",
+  "common.this_voice_was_revoked_its_sample_and_narrations_are_deleted": "This voice was revoked; its sample and narrations are deleted.",
+  "common.the_provider_asks_the_speaker_to_verify_this_voice_before_it_can_narrate_complete_the_verification_with_the_speaker_then": "The provider asks the speaker to verify this voice before it can narrate. Complete the verification with the speaker, then check again.",
+  "common.narration_uses_azure_voices_which_cannot_read_with_a_cloned_voice_set_tts_provider_elevenlabs_to_clone_voices_for_narrat": "Narration uses Azure voices, which cannot read with a cloned voice. Set TTS_PROVIDER=elevenlabs to clone voices for narration.",
+  "common.narration_uses_elevenlabs_so_cloned_voices_must_be_made_there_too_set_voice_clone_provider_elevenlabs": "Narration uses ElevenLabs, so cloned voices must be made there too: set VOICE_CLONE_PROVIDER=elevenlabs."
 }

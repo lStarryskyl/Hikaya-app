@@ -75,6 +75,16 @@ class Settings(BaseSettings):
     azure_openai_output_usd_per_million: float = Field(4.5, ge=0)
     # For reasoning models only (minimal | low | medium | high); empty sends nothing.
     azure_openai_reasoning_effort: str = Field("", pattern=r"^$|^(none|minimal|low|medium|high)$")
+    # Transcription (#13). ElevenLabs Scribe is billed to the card; Azure fast transcription
+    # to the Azure budget. Endpoint: https://<resource>.cognitiveservices.azure.com, or leave
+    # it empty to use the regional host. Prices per audio hour.
+    elevenlabs_stt_model: str = "scribe_v2"
+    elevenlabs_stt_usd_per_hour: float = Field(0.22, ge=0)
+    azure_speech_key: str = ""
+    azure_speech_region: str = Field("", pattern=r"^$|^[a-z0-9]+$")
+    azure_speech_endpoint: str = ""
+    azure_speech_arabic_locale: str = "ar-JO"
+    azure_stt_usd_per_hour: float = Field(0.36, ge=0)
     voice_clone_provider: str = "fake"
     elevenlabs_api_key: str = ""
     # Conservative reservation, configurable for the account's plan.

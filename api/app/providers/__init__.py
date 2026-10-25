@@ -111,6 +111,10 @@ def speech_to_text() -> SpeechToText:
     name = get_settings().stt_provider
     if name == "fake":
         return fake.FakeSpeechToText()
+    if name in ("elevenlabs", "azure"):
+        from app.providers.speech import AzureSpeechToText, ElevenLabsSpeechToText
+
+        return ElevenLabsSpeechToText() if name == "elevenlabs" else AzureSpeechToText()
     raise _not_connected("transcription", name)
 
 

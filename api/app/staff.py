@@ -11,8 +11,9 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app import discover, stories
 from app.auth import require_roles
@@ -28,7 +29,8 @@ admin_only = require_roles(Role.ADMIN)
 
 LIST_LIMIT = 50
 AUDIT_LIMIT = 100
-STORY = "story"  # the audit target type for every action here
+STORY = "story"  # the audit target type of story actions
+MEMBER = "user"  # ... and of actions on a member's account
 
 
 class HeldStory(stories.StoryOut):
@@ -51,6 +53,15 @@ class RejectIn(BaseModel):
     note: str | None = Field(default=None, max_length=2000)
 
 
+class PlanResetIn(BaseModel):
+    email: str = Field(max_length=320)
+
+
+class PlanOut(BaseModel):
+    email: str
+    plan: str
+
+
 class ActionOut(BaseModel):
     id: uuid.UUID
     status: str
@@ -65,7 +76,8 @@ class PersonOut(BaseModel):
 class TargetOut(BaseModel):
     type: str
     id: uuid.UUID
-    title: str | None  # None once the story has been deleted
+    # The story's title, or the member's name; None once the target has been deleted.
+    title: str | None
 
 
 class AuditOut(BaseModel):
@@ -248,6 +260,40 @@ async def uncurate(
     return await _audit_and_commit(session, story, user, AuditAction.UNCURATE)
 
 
+# --- members ---
+
+
+@router.post("/members/plan-reset", response_model=PlanOut)
+async def reset_plan(
+    body: PlanResetIn,
+    user: User = Depends(staff_only),
+    session: AsyncSession = Depends(get_session),
+) -> PlanOut:
+    """Put a member back on the free plan (after a demo checkout, for example)."""
+    member = (
+        await session.execute(
+            select(User)
+            .where(func.lower(User.email) == body.email.strip().lower())
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if member is None:
+        raise HTTPException(404, "No account has that email address.")
+    previous = member.plan
+    member.plan = "free"
+    session.add(
+        AuditEvent(
+            actor_id=user.id,
+            action=AuditAction.PLAN_RESET.value,
+            target_type=MEMBER,
+            target_id=member.id,
+            detail={"from": previous},
+        )
+    )
+    await session.commit()
+    return PlanOut(email=member.email, plan=member.plan)
+
+
 # --- admin: audit and spending ---
 
 
@@ -256,12 +302,16 @@ async def audit_log(
     _: User = Depends(admin_only), session: AsyncSession = Depends(get_session)
 ) -> list[AuditOut]:
     """The latest staff actions, newest first."""
+    member = aliased(User)
     rows = (
         await session.execute(
-            select(AuditEvent, User, Story)
+            select(AuditEvent, User, Story, member)
             .outerjoin(User, User.id == AuditEvent.actor_id)
             .outerjoin(
                 Story, (AuditEvent.target_type == STORY) & (Story.id == AuditEvent.target_id)
+            )
+            .outerjoin(
+                member, (AuditEvent.target_type == MEMBER) & (member.id == AuditEvent.target_id)
             )
             .order_by(AuditEvent.created_at.desc())
             .limit(AUDIT_LIMIT)
@@ -273,12 +323,14 @@ async def audit_log(
             action=event.action,
             actor=PersonOut(id=actor.id, display_name=actor.display_name) if actor else None,
             target=TargetOut(
-                type=event.target_type, id=event.target_id, title=story.title if story else None
+                type=event.target_type,
+                id=event.target_id,
+                title=story.title if story else target.display_name if target else None,
             ),
             detail=event.detail,
             at=event.created_at,
         )
-        for event, actor, story in rows
+        for event, actor, story, target in rows
     ]
 
 

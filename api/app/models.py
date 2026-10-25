@@ -202,6 +202,8 @@ class Story(Base):
     status: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=StoryStatus.DRAFT.value
     )
+    # A pre-made AI video sample shown on this story to premium members (#19); seeded only.
+    ai_video_sample: Mapped[str | None] = mapped_column(Text)
     # Which text the narration reads: the polished text, or the MSA translation.
     narration_source: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=NarrationSource.POLISHED.value
@@ -500,6 +502,7 @@ class AuditAction(StrEnum):
     CURATE = "curate"
     DISMISS = "dismiss"
     UNCURATE = "uncurate"
+    PLAN_RESET = "plan_reset"
 
 
 class AuditEvent(Base):

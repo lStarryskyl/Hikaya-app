@@ -15,7 +15,7 @@ from pathlib import Path
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app import places
+from app import billing, places
 from app.config import get_settings
 from app.db import dispose_engine, get_sessionmaker
 from app.demo_data import PLACES, STORIES, STORYTELLERS, StorySeed
@@ -121,6 +121,11 @@ async def _seed_stories(
         # Relative to today, so "recently added" stays true for the demo whenever it runs.
         story.published_at = now - timedelta(days=seed.published_days_ago)
         story.cover_photo_slug = seed.cover if seed.cover in photos else None
+        # Only when the sample's file is installed (it ships in api/seed/videos).
+        sample = seed.ai_video
+        story.ai_video_sample = (
+            sample if sample and (billing.SAMPLE_DIR / f"{sample}.webm").is_file() else None
+        )
         # Museum curation is decided in the app after the first load; never undo it here.
         if existing is None and seed.curated:
             story.curated_at = story.published_at

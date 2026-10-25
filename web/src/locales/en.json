@@ -512,5 +512,16 @@
   "common.set_higgsfield_credentials_and_live_ai_enabled_framing_follows_the_input_photo_seed_is_unsupported": "Set Higgsfield credentials and LIVE_AI_ENABLED. Framing follows the input photo; seed is unsupported.",
   "common.set_google_cloud_project_google_access_token_and_live_ai_enabled_gemini_api_veo_previews_are_retired": "Set GOOGLE_CLOUD_PROJECT, GOOGLE_ACCESS_TOKEN and LIVE_AI_ENABLED. Gemini API Veo previews are retired.",
   "common.set_custom_video_endpoint_and_live_ai_enabled_for_a_compatible_cog_predictor": "Set CUSTOM_VIDEO_ENDPOINT and LIVE_AI_ENABLED for a compatible Cog predictor.",
-  "common.accessibility": "Accessibility"
+  "common.accessibility": "Accessibility",
+  "common.ai_video_preview": "AI video preview",
+  "common.premium_unlocks_this_ai_video_preview": "Premium unlocks this AI video preview.",
+  "common.unlock_with_premium": "Unlock with Premium",
+  "common.credit": "Credit:",
+  "common.a_sample_of_ai_video_from_a_model_s_demonstration_reel_not_made_from_this_story": "A sample of AI video from a model's demonstration reel, not made from this story.",
+  "common.reset_a_member_s_plan": "Reset a member's plan",
+  "common.member_s_email": "Member's email",
+  "common.reset_to_free": "Reset to free",
+  "common.email_is_back_on_the_free_plan": "{email} is back on the free plan.",
+  "common.reset_a_member_s_plan_to_free": "reset a member's plan to free",
+  "common.description": "Description"
 }

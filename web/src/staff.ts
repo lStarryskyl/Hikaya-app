@@ -24,7 +24,8 @@ export interface ActionResult {
   curated: boolean
 }
 
-export type AuditActionName = 'approve' | 'reject' | 'curate' | 'dismiss' | 'uncurate'
+export type AuditActionName =
+  'approve' | 'reject' | 'curate' | 'dismiss' | 'uncurate' | 'plan_reset'
 
 export interface AuditEntry {
   id: string
@@ -53,7 +54,15 @@ export const AUDIT_LABELS: Record<AuditActionName, string> = {
   curate: 'added a story to the museum',
   dismiss: 'set a candidate aside',
   uncurate: 'removed a story from the museum',
+  plan_reset: "reset a member's plan to free",
 }
+
+/** Put a member back on the free plan (after a demo checkout, for example). */
+export const resetPlan = (email: string) =>
+  api<{ email: string; plan: string }>('/staff/members/plan-reset', {
+    method: 'POST',
+    body: { email },
+  })
 
 const story = (id: string, action: string) => `/staff/stories/${id}/${action}`
 

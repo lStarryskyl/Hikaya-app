@@ -43,6 +43,8 @@ class StorySeed:
     curated: bool
     cover: str
     lines: tuple[dict[str, str], ...] = field(default_factory=tuple)
+    # A pre-made AI video sample (app/billing.py SAMPLES id) for premium members.
+    ai_video: str | None = None
 
 
 PLACES: tuple[PlaceSeed, ...] = (
@@ -219,6 +221,7 @@ STORIES: tuple[StorySeed, ...] = (
         duration_ms=_min(15),
         published_days_ago=60,
         curated=True,
+        ai_video="wan-light",
         cover="wadi-rum-sunset",
         lines=(
             {
@@ -303,6 +306,7 @@ STORIES: tuple[StorySeed, ...] = (
         duration_ms=_min(12, 45),
         published_days_ago=45,
         curated=True,
+        ai_video="wan-camera",
         cover="petra-treasury",
         lines=(
             {

@@ -87,6 +87,17 @@ export interface StoryRecord {
   narration_source: NarrationSource
   narration: Narration | null
   slideshow: { url: string; content_type: string } | null
+  /** A pre-made AI video sample (seeded stories only); locked unless premium or staff. */
+  ai_video?: {
+    sample_id: string
+    title: string
+    credit: string
+    source_url: string
+    note: string
+    poster_url: string
+    locked: boolean
+    video_url: string | null
+  } | null
   /** Only for the author and staff. */
   moderation: {
     held: boolean

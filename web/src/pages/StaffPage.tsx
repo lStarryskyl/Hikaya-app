@@ -16,6 +16,7 @@ import {
   getReviewPage,
   getSpend,
   isStaff,
+  resetPlan,
   rejectStory,
   uncurateStory,
   type Candidate,
@@ -197,6 +198,8 @@ export default function StaffPage() {
         </div>
       </section>
 
+      <PlanReset onDone={() => setRound((r) => r + 1)} />
+
       {admin && spend.data && (
         <section aria-labelledby="spend-heading">
           <h2 id="spend-heading" className="mb-3 flex items-center gap-2 font-serif text-xl">
@@ -263,7 +266,9 @@ export default function StaffPage() {
                     {e.actor?.display_name ?? t('A removed account')}
                   </span>
                   <span className="text-muted2">{t(AUDIT_LABELS[e.action])}:</span>
-                  {e.target.title !== null ? (
+                  {e.target.type === 'user' ? (
+                    <span dir="auto">{e.target.title ?? t('A removed account')}</span>
+                  ) : e.target.title !== null ? (
                     <Link to={`/story/${e.target.id}`} className="text-terracotta hover:underline">
                       {e.target.title || 'Untitled story'}
                     </Link>
@@ -292,6 +297,68 @@ function Empty({ children }: { children: React.ReactNode }) {
     <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted2">
       {t(children)}
     </p>
+  )
+}
+
+/** Staff put a member back on the free plan, for example after a demo checkout. */
+function PlanReset({ onDone }: { onDone: () => void }) {
+  const [email, setEmail] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState('')
+  const [failure, setFailure] = useState('')
+  return (
+    <section aria-labelledby="plan-heading">
+      <h2 id="plan-heading" className="mb-3 font-serif text-xl">
+        {t("Reset a member's plan")}
+      </h2>
+      <Card className="p-4">
+        <form
+          className="flex flex-wrap items-end gap-3"
+          onSubmit={async (e) => {
+            e.preventDefault()
+            setBusy(true)
+            setResult('')
+            setFailure('')
+            try {
+              const done = await resetPlan(email.trim())
+              setResult(message('{email} is back on the free plan.', { email: done.email }))
+              setEmail('')
+              onDone()
+            } catch (err) {
+              setFailure(
+                err instanceof ApiError ? err.message : t('That did not work. Please try again.'),
+              )
+            } finally {
+              setBusy(false)
+            }
+          }}
+        >
+          <label className="block min-w-64 flex-1 text-xs font-medium text-muted2">
+            {t("Member's email")}
+            <input
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-border bg-cream p-2 text-sm text-ink"
+            />
+          </label>
+          <PillButton type="submit" variant="outline" className="!py-2 text-xs" disabled={busy}>
+            {t('Reset to free')}
+          </PillButton>
+        </form>
+        {result && (
+          <p role="status" className="mt-2 text-sm text-teal">
+            {result}
+          </p>
+        )}
+        {failure && (
+          <p role="alert" className="mt-2 text-sm text-terracotta-dark">
+            {failure}
+          </p>
+        )}
+      </Card>
+    </section>
   )
 }
 

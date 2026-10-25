@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field, StringConstraints, field_validator
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import audio, consent, media, moderation, photos, pipeline, places
+from app import audio, billing, consent, media, moderation, photos, pipeline, places
 from app.auth import current_user, current_user_optional
 from app.config import get_settings
 from app.db import get_session
@@ -96,6 +96,20 @@ class NarrationOut(BaseModel):
 class MediaOut(BaseModel):
     url: str
     content_type: str
+
+
+class AiVideoOut(BaseModel):
+    """A pre-made AI video sample shown on the story (#19). Premium members and staff can
+    watch it; everyone else sees the poster and an upgrade prompt."""
+
+    sample_id: str
+    title: str
+    credit: str
+    source_url: str
+    note: str
+    poster_url: str
+    locked: bool
+    video_url: str | None  # None while locked; the video route checks the plan as well
 
 
 class LayerOut(BaseModel):
@@ -201,6 +215,7 @@ class StoryOut(BaseModel):
     narration_source: str
     narration: NarrationOut | None
     slideshow: MediaOut | None
+    ai_video: AiVideoOut | None = None
     # For the author and staff only; None for everyone else.
     moderation: ModerationOut | None = None
     review: ReviewOut | None = None
@@ -293,8 +308,29 @@ async def _slideshow_out(session: AsyncSession, story_id: uuid.UUID) -> MediaOut
     return MediaOut(url=media_url(asset), content_type=asset.content_type) if asset else None
 
 
-async def to_out(session: AsyncSession, story: Story, *, private: bool = False) -> StoryOut:
-    """`private` adds moderation and review details; pass it only for the author and staff."""
+def _ai_video_out(story: Story, viewer: User | None) -> AiVideoOut | None:
+    sample = next((x for x in billing.SAMPLES if x["id"] == story.ai_video_sample), None)
+    if sample is None:
+        return None
+    unlocked = viewer is not None and (viewer.plan == "premium" or viewer.role in STAFF_ROLES)
+    base = f"/api/v1/video-samples/{sample['id']}"
+    return AiVideoOut(
+        sample_id=sample["id"],
+        title=sample["title"],
+        credit=sample["credit"],
+        source_url=sample["source_url"],
+        note="A sample of AI video from a model's demonstration reel, not made from this story.",
+        poster_url=f"{base}/poster",
+        locked=not unlocked,
+        video_url=f"{base}/video" if unlocked else None,
+    )
+
+
+async def to_out(
+    session: AsyncSession, story: Story, *, private: bool = False, viewer: User | None = None
+) -> StoryOut:
+    """`private` adds moderation and review details; pass it only for the author and staff.
+    `viewer` decides whether a premium AI video is unlocked."""
     author = await session.get(User, story.author_id)
     assets = await _audio_assets(session, story.id)
     playable, original = assets.get(AssetKind.AUDIO), assets.get(AssetKind.ORIGINAL_AUDIO)
@@ -336,6 +372,7 @@ async def to_out(session: AsyncSession, story: Story, *, private: bool = False) 
         narration_source=story.narration_source,
         narration=await _narration_out(session, story.id),
         slideshow=await _slideshow_out(session, story.id),
+        ai_video=_ai_video_out(story, viewer),
     )
     if private:
         out.moderation = _moderation_out(await moderation.latest(session, story.id))
@@ -367,7 +404,7 @@ async def create_story(
     session.add(story)
     await session.commit()
     await session.refresh(story)
-    return await to_out(session, story, private=True)
+    return await to_out(session, story, private=True, viewer=user)
 
 
 class UploadLimits(BaseModel):
@@ -405,7 +442,7 @@ async def read_story(
 ) -> StoryOut:
     story = await _visible_story(session, story_id, user)
     private = user is not None and (user.id == story.author_id or user.role in STAFF_ROLES)
-    return await to_out(session, story, private=private)
+    return await to_out(session, story, private=private, viewer=user)
 
 
 @router.patch("/{story_id}", response_model=StoryOut)
@@ -423,7 +460,7 @@ async def edit_story(
     if story.original_language != language_before:
         await pipeline.start(session, story)
     await session.refresh(story)
-    return await to_out(session, story, private=True)
+    return await to_out(session, story, private=True, viewer=user)
 
 
 @router.put("/{story_id}/audio", response_model=StoryOut)
@@ -502,7 +539,7 @@ async def upload_audio(
     storage.delete(*(asset.storage_key for asset in old.values()))
     await pipeline.start(session, story)
     await session.refresh(story)
-    return await to_out(session, story, private=True)
+    return await to_out(session, story, private=True, viewer=user)
 
 
 def missing_for_publishing(
@@ -550,7 +587,7 @@ async def submit_story(
         raise HTTPException(422, str(e)) from e
     await session.commit()
     await session.refresh(story)
-    return await to_out(session, story, private=True)
+    return await to_out(session, story, private=True, viewer=user)
 
 
 @router.post("/{story_id}/photos", status_code=201, response_model=photos.StoryPhotoOut)
@@ -683,7 +720,7 @@ async def edit_layer(
     except pipeline.Misaligned:
         raise HTTPException(422, "Keep exactly one text for each line.") from None
     await session.refresh(story)
-    return await to_out(session, story, private=True)
+    return await to_out(session, story, private=True, viewer=user)
 
 
 @media_router.api_route("/media/{asset_id}", methods=["GET", "HEAD"], include_in_schema=False)

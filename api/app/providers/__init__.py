@@ -120,6 +120,10 @@ def language_model() -> LanguageModel:
     name = get_settings().llm_provider
     if name == "fake":
         return fake.FakeLanguageModel()
+    if name == "azure":
+        from app.providers.azure_llm import AzureLanguageModel
+
+        return AzureLanguageModel()
     raise _not_connected("language model", name)
 
 

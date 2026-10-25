@@ -26,6 +26,18 @@ from app.errors import UserFacingError
 from app.models import ProviderCacheEntry, SpendEntry
 from app.storage import get_storage
 
+# Set by an adapter during a call when the provider reports what the call cost (Azure
+# OpenAI returns token usage); otherwise the estimate is recorded as the cost.
+REPORTED_COST: ContextVar[list[Decimal] | None] = ContextVar("reported_cost", default=None)
+
+
+def report_cost(usd: Decimal) -> None:
+    """Called by an adapter inside `run()`: the provider's own figure for this call."""
+    reported = REPORTED_COST.get()
+    if reported is not None:
+        reported.append(usd)
+
+
 # Set by the worker around each job, so ledger rows and job costs know their job.
 CURRENT_JOB: ContextVar[uuid.UUID | None] = ContextVar("current_job", default=None)
 JOB_COST: ContextVar[list[Decimal] | None] = ContextVar("job_cost", default=None)
@@ -151,6 +163,8 @@ async def call(
         raise LiveAIOff
     estimate = provider.estimate_usd(operation, units)
     entry_id = await _reserve(provider.name, operation, budget, estimate)
+    reported: list[Decimal] = []
+    token = REPORTED_COST.set(reported)
     try:
         result = await run()
     except BaseException:
@@ -162,11 +176,14 @@ async def call(
             estimate if charge_on_failure else None,
         )
         raise
-    # Providers report no exact bill per call, so the estimate is recorded as the cost.
-    await _settle(entry_id, "committed", estimate)
+    finally:
+        REPORTED_COST.reset(token)
+    # The provider's own figure when it gives one; otherwise the estimate stands as the cost.
+    cost = sum(reported, Decimal("0")) if reported else estimate
+    await _settle(entry_id, "committed", cost)
     costs = JOB_COST.get()
     if costs is not None:
-        costs.append(estimate)
+        costs.append(cost)
     await _store(key, operation, provider.name, result, file_key)
     return result
 

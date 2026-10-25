@@ -39,9 +39,9 @@ class Settings(BaseSettings):
     worker_poll_seconds: float = 1.0
     job_stale_after_seconds: int = 600
 
-    # Provider choices. Each step can be switched without code changes.
-    # Fake until the real adapters land (#12, #13, #14); then the defaults return to
-    # elevenlabs / azure as docs/DECISIONS.md says.
+    # Provider choices. Each step can be switched without code changes. The defaults are the
+    # fakes, so nothing is called or paid for until the keys are in .env and the provider is
+    # chosen here; see docs/DECISIONS.md for the intended real choices.
     stt_provider: str = "fake"
     tts_provider: str = "fake"
     llm_provider: str = "fake"
@@ -65,6 +65,16 @@ class Settings(BaseSettings):
     custom_video_estimate_usd: float = Field(0.0, ge=0)
     video_estimate_usd: float = Field(1.0, ge=0)
     video_poll_seconds: float = Field(3.0, ge=0.1, le=30)
+    # Azure OpenAI (#12): polishing, translation and moderation. The deployment is the name
+    # given to the model in Azure AI Foundry. Prices are per million tokens for that model
+    # (defaults: gpt-5.4-mini, Global Standard, docs/research/speech-voice-and-llm.md).
+    azure_openai_endpoint: str = ""
+    azure_openai_api_key: str = ""
+    azure_openai_deployment: str = ""
+    azure_openai_input_usd_per_million: float = Field(0.75, ge=0)
+    azure_openai_output_usd_per_million: float = Field(4.5, ge=0)
+    # For reasoning models only (minimal | low | medium | high); empty sends nothing.
+    azure_openai_reasoning_effort: str = Field("", pattern=r"^$|^(none|minimal|low|medium|high)$")
     voice_clone_provider: str = "fake"
     elevenlabs_api_key: str = ""
     # Conservative reservation, configurable for the account's plan.

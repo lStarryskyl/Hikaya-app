@@ -138,6 +138,11 @@ These exist on purpose while the build is in progress. Each closes with the tick
 - Place photos are served as WebP at 480, 960 and 1600 pixels wide; pages pick a size with `srcset`.
 - FFmpeg reads each upload with the demuxer for its declared type and only the `file` protocol, so it never guesses a format from the content.
 
+## Real providers
+
+- Every provider stays on its fake until its keys are in `.env`, it is chosen by setting, and `LIVE_AI_ENABLED=true`. A missing key is reported by name when the provider is chosen, and nothing is called.
+- The Azure language model (`LLM_PROVIDER=azure`) uses the Azure OpenAI v1 API with Structured Outputs: the lines go and come back as a JSON array with exactly one line each, and any other count, malformed answer, refusal or cut-off answer fails the step with a plain message instead of being guessed at. Translation never targets a dialect. The ledger records the cost Azure reports (token usage at the configured price per million tokens); the reservation before the call is a deliberately high estimate.
+
 ## Narration and slideshow
 
 - Narration starts when the member submits, alongside the moderation check, so reviewers hear held stories too and no voice credit goes on drafts. (The spec said "once the text is ready"; changed on 2026-10-23 with the owner's agreement.) The story is published without waiting for either; the player shows what exists, and the author and staff see their progress there, with a retry for a failed one in any status.

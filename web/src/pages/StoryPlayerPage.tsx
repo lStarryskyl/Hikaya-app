@@ -427,6 +427,63 @@ function Player({
             )}
           </Card>
 
+          {story.record.ai_video && (
+            <div className="mb-6">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
+                {t('AI video preview')}
+              </div>
+              {story.record.ai_video.locked || !story.record.ai_video.video_url ? (
+                <div className="relative overflow-hidden rounded-xl2">
+                  <img
+                    src={story.record.ai_video.poster_url}
+                    alt=""
+                    className="aspect-video w-full object-cover opacity-60"
+                  />
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/40 p-4 text-center text-cream">
+                    <p className="text-sm">{t('Premium unlocks this AI video preview.')}</p>
+                    <Link
+                      to="/premium"
+                      className="rounded-full bg-terracotta px-4 py-2 text-xs font-semibold text-cream"
+                    >
+                      {t('Unlock with Premium')}
+                    </Link>
+                  </div>
+                </div>
+              ) : (
+                <video
+                  src={story.record.ai_video.video_url}
+                  poster={story.record.ai_video.poster_url}
+                  controls
+                  preload="none"
+                  className="aspect-video w-full rounded-xl2 bg-black"
+                  aria-label={`${t('AI video preview')}: ${story.record.ai_video.title}`}
+                >
+                  {/* The sample is silent; the caption says what it shows. */}
+                  <track
+                    kind="captions"
+                    srcLang="en"
+                    label={t('Description')}
+                    src={captions([
+                      { start_ms: 0, end_ms: 6000, text: story.record.ai_video.title },
+                    ])}
+                    default
+                  />
+                </video>
+              )}
+              <p className="mt-2 text-[11px] text-muted">
+                {t(story.record.ai_video.note)} {t('Credit:')}{' '}
+                <a
+                  href={story.record.ai_video.source_url}
+                  className="underline"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {story.record.ai_video.credit}
+                </a>
+              </p>
+            </div>
+          )}
+
           {story.slideshow && (
             <div className="mb-6">
               <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">

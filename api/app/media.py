@@ -33,6 +33,7 @@ from app.models import (
     NarrationSource,
     NarrationTiming,
     PipelineStep,
+    ProviderCacheEntry,
     Story,
     VoiceClone,
 )
@@ -88,10 +89,13 @@ async def _queue_narration(session: AsyncSession, story: Story) -> None:
     texts = [s["text"] for s in layer.segments]
     clone = None
     if story.narrator_voice_id:
+        from app.providers.voices import unavailable_reason
         from app.voices import ready_voice  # voices imports this module
 
-        # A cloned voice chosen by staff, while it is ready and not revoked.
-        clone = await ready_voice(session, story.narrator_voice_id)
+        # A cloned voice chosen by staff, while it is ready, not revoked, and usable by the
+        # current narration provider (an ElevenLabs voice means nothing to Azure).
+        if unavailable_reason() is None:
+            clone = await ready_voice(session, story.narrator_voice_id)
     input_hash = step_hash(
         NARRATE,
         get_settings().tts_provider,
@@ -246,13 +250,17 @@ async def _speak(
 @handler(NARRATE)
 async def narrate(payload: dict) -> dict:
     story_id = uuid.UUID(payload["story_id"])
+    clone_id = uuid.UUID(payload["voice_clone_id"]) if payload.get("voice_clone_id") else None
     async with get_sessionmaker()() as session:
         if not await is_current(session, payload):
             return STALE
+        if clone_id is not None:
+            clone = await session.get(VoiceClone, clone_id)
+            if clone is None or clone.revoked_at is not None:
+                return STALE  # never pay to speak in a revoked voice
     texts, language = payload["texts"], payload["language"]
     tts = text_to_speech()
     voice = payload.get("voice") or tts.voice_for(language)
-    clone_id = uuid.UUID(payload["voice_clone_id"]) if payload.get("voice_clone_id") else None
     storage = get_storage()
     key = _new_key(story_id, "narration", ".mp3")
 
@@ -290,7 +298,11 @@ async def narrate(payload: dict) -> dict:
         if clone_id is not None:
             clone = await session.get(VoiceClone, clone_id, with_for_update=True)
             if clone is None or clone.revoked_at is not None:
-                return await _discard(story_id, key)  # revoked while this ran
+                # Revoked while this ran: the speech just cached in that voice goes too.
+                purged = await purge_speech(session, voice)
+                await session.commit()
+                await asyncio.to_thread(storage.delete, *purged)
+                return await _discard(story_id, key)
         story = await session.get(Story, story_id)
         asset = await _save_asset(session, story_id, AssetKind.NARRATION, key, MP3)
         row = await session.get(Narration, story_id)
@@ -356,14 +368,14 @@ async def slideshow(payload: dict) -> dict:
         if narration is None or sound_asset is None:
             return STALE  # the narration is being made again; it queues the slideshow
         sound_key = sound_asset.storage_key
-        seconds_ms = narration.segments[-1]["end_ms"] if narration.segments else 0
+        narration_ms = narration.segments[-1]["end_ms"] if narration.segments else 0
     storage = get_storage()
     # A missing file fails the step rather than quietly making a different slideshow.
     if not all(storage.exists(k) for k in [*payload["images"], sound_key]):
         raise UserFacingError("A photo or the narration for the slideshow is missing.")
     images = [storage.path(k) for k in payload["images"]]
     sound = storage.path(sound_key)
-    seconds = (seconds_ms or await audio.duration_ms(sound)) / 1000
+    seconds = (narration_ms or await audio.duration_ms(sound)) / 1000
     key = _new_key(story_id, "slideshow", ".mp4")
     await _render(
         key, *_inputs("webp_pipe", images), *_inputs("mp3", [sound]),
@@ -381,6 +393,25 @@ async def slideshow(payload: dict) -> dict:
         await session.commit()
     await asyncio.to_thread(storage.delete, *old_keys)
     return {"photos": len(images), "seconds": round(seconds, 1)}
+
+
+async def purge_speech(session: AsyncSession, voice: str) -> list[str]:
+    """Remove every cached piece of speech in a voice (a revoked clone). Returns the file keys
+    to delete once the transaction has committed."""
+    keys = []
+    cached = (
+        await session.execute(
+            select(ProviderCacheEntry).where(
+                ProviderCacheEntry.operation == "speak",
+                ProviderCacheEntry.result["voice"].astext == voice,
+            )
+        )
+    ).scalars()
+    for entry in cached:
+        if entry.file_key:
+            keys.append(entry.file_key)
+        await session.delete(entry)
+    return keys
 
 
 async def narration_for(

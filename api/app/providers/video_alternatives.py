@@ -8,7 +8,7 @@ import httpx
 
 from app.config import get_settings
 from app.errors import UserFacingError
-from app.providers.video import download_video, https_host
+from app.providers.video import download_video, https_host, video_cost
 
 HIGGSFIELD_MODEL = "bytedance/seedance-2.5/image-to-video"
 VEO_MODEL = "veo-3.1-fast-generate-001"
@@ -35,7 +35,7 @@ class HiggsfieldVideo:
     budget = "card"
 
     def estimate_usd(self, operation: str, units: int) -> Decimal:
-        return Decimal(str(get_settings().video_estimate_usd))
+        return video_cost(units)
 
     @property
     def headers(self) -> dict:
@@ -118,7 +118,7 @@ class GoogleVeo:
     budget = "card"
 
     def estimate_usd(self, operation: str, units: int) -> Decimal:
-        return Decimal(str(get_settings().video_estimate_usd))
+        return video_cost(units)
 
     @property
     def headers(self) -> dict:

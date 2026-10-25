@@ -536,5 +536,6 @@
   "common.this_voice_was_revoked_its_sample_and_narrations_are_deleted": "This voice was revoked; its sample and narrations are deleted.",
   "common.the_provider_asks_the_speaker_to_verify_this_voice_before_it_can_narrate_complete_the_verification_with_the_speaker_then": "The provider asks the speaker to verify this voice before it can narrate. Complete the verification with the speaker, then check again.",
   "common.narration_uses_azure_voices_which_cannot_read_with_a_cloned_voice_set_tts_provider_elevenlabs_to_clone_voices_for_narrat": "Narration uses Azure voices, which cannot read with a cloned voice. Set TTS_PROVIDER=elevenlabs to clone voices for narration.",
-  "common.narration_uses_elevenlabs_so_cloned_voices_must_be_made_there_too_set_voice_clone_provider_elevenlabs": "Narration uses ElevenLabs, so cloned voices must be made there too: set VOICE_CLONE_PROVIDER=elevenlabs."
+  "common.narration_uses_elevenlabs_so_cloned_voices_must_be_made_there_too_set_voice_clone_provider_elevenlabs": "Narration uses ElevenLabs, so cloned voices must be made there too: set VOICE_CLONE_PROVIDER=elevenlabs.",
+  "common.the_speaker_has_verified_it": "The speaker has verified it"
 }

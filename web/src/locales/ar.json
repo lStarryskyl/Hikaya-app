@@ -536,5 +536,6 @@
   "common.this_voice_was_revoked_its_sample_and_narrations_are_deleted": "أُلغي هذا الصوت، وحُذفت عيّنته وكل سرد صُنع به.",
   "common.the_provider_asks_the_speaker_to_verify_this_voice_before_it_can_narrate_complete_the_verification_with_the_speaker_then": "يطلب المزوّد من المتحدث التحقق من هذا الصوت قبل استخدامه في السرد. أكمل التحقق مع المتحدث ثم تحقق مرة أخرى.",
   "common.narration_uses_azure_voices_which_cannot_read_with_a_cloned_voice_set_tts_provider_elevenlabs_to_clone_voices_for_narrat": "يستخدم السرد أصوات Azure، وهي لا تقرأ بصوت مستنسخ. اضبط TTS_PROVIDER=elevenlabs لاستنساخ الأصوات للسرد.",
-  "common.narration_uses_elevenlabs_so_cloned_voices_must_be_made_there_too_set_voice_clone_provider_elevenlabs": "يستخدم السرد ElevenLabs، لذا يجب أن تُستنسخ الأصوات هناك أيضًا: اضبط VOICE_CLONE_PROVIDER=elevenlabs."
+  "common.narration_uses_elevenlabs_so_cloned_voices_must_be_made_there_too_set_voice_clone_provider_elevenlabs": "يستخدم السرد ElevenLabs، لذا يجب أن تُستنسخ الأصوات هناك أيضًا: اضبط VOICE_CLONE_PROVIDER=elevenlabs.",
+  "common.the_speaker_has_verified_it": "أكّد المتحدث التحقق"
 }

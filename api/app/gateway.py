@@ -168,13 +168,17 @@ async def call(
     try:
         result = await run()
     except BaseException:
-        # An uncertain asynchronous submission may already be billed. Keep its estimate
-        # counted rather than releasing budget that could already have been spent.
-        await _settle(
-            entry_id,
-            "committed" if charge_on_failure else "released",
-            estimate if charge_on_failure else None,
-        )
+        # Billed even though the answer was unusable (Azure reports the tokens it used), or an
+        # uncertain asynchronous submission that may already be billed: keep it counted rather
+        # than releasing budget that could already have been spent.
+        if reported or charge_on_failure:
+            cost = sum(reported, Decimal("0")) if reported else estimate
+            await _settle(entry_id, "committed", cost)
+            costs = JOB_COST.get()
+            if costs is not None:
+                costs.append(cost)
+        else:
+            await _settle(entry_id, "released", None)
         raise
     finally:
         REPORTED_COST.reset(token)

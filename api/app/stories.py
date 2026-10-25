@@ -219,6 +219,8 @@ class StoryOut(BaseModel):
     narration: NarrationOut | None
     slideshow: MediaOut | None
     ai_video: AiVideoOut | None = None
+    # Staff and the author only: the cloned voice chosen to narrate it, if any.
+    narrator_voice_id: uuid.UUID | None = None
     # For the author and staff only; None for everyone else.
     moderation: ModerationOut | None = None
     review: ReviewOut | None = None
@@ -383,6 +385,7 @@ async def to_out(
         ai_video=_ai_video_out(story, viewer),
     )
     if private:
+        out.narrator_voice_id = story.narrator_voice_id
         out.moderation = _moderation_out(await moderation.latest(session, story.id))
         # The reviewer's note matters only while the author is asked to make changes.
         if story.status == StoryStatus.NEEDS_EDIT:

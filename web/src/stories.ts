@@ -100,6 +100,8 @@ export interface StoryRecord {
     locked: boolean
     video_url: string | null
   } | null
+  /** The cloned voice chosen to narrate it (author and staff only). */
+  narrator_voice_id?: string | null
   /** Only for the author and staff. */
   moderation: {
     held: boolean

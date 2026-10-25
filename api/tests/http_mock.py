@@ -2,6 +2,10 @@
 
 import httpx
 
+# The real client, captured once, so calling mock_http twice in a test replaces the
+# responder instead of wrapping the first one.
+REAL_CLIENT = httpx.AsyncClient
+
 
 def mock_http(monkeypatch, respond):
     """Route all httpx.AsyncClient traffic to `respond(request) -> httpx.Response`.
@@ -12,10 +16,9 @@ def mock_http(monkeypatch, respond):
         seen.append(request)
         return respond(request)
 
-    original = httpx.AsyncClient
     monkeypatch.setattr(
         httpx,
         "AsyncClient",
-        lambda **kwargs: original(**{**kwargs, "transport": httpx.MockTransport(handler)}),
+        lambda **kwargs: REAL_CLIENT(**{**kwargs, "transport": httpx.MockTransport(handler)}),
     )
     return seen

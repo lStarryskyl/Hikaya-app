@@ -204,10 +204,8 @@ async def generate_job(payload: dict) -> dict:
         generation = await find_generation(session, generation_id)
         if generation.file_key:
             return {"file_key": generation.file_key}
-        if generation.provider_request:
-            # Already submitted (a retried job): never submit twice, just check on it.
-            deadline = _deadline()
-        else:
+        deadline = _deadline(generation.created_at)
+        if not generation.provider_request:
             settings = get_settings()
             if not settings.enable_ai_video or (
                 generation.provider != "fake" and not settings.live_ai_enabled
@@ -243,7 +241,6 @@ async def generate_job(payload: dict) -> dict:
             generation.provider_request = request
             generation.progress = "Waiting for provider"
             await session.commit()
-            deadline = _deadline()
     return await _check(generation_id, 1, deadline)
 
 
@@ -256,8 +253,9 @@ async def poll_job(payload: dict) -> dict:
     )
 
 
-def _deadline() -> datetime:
-    return datetime.now(UTC) + timedelta(seconds=get_settings().video_max_wait_seconds)
+def _deadline(queued_at: datetime) -> datetime:
+    """Checks stop this long after the video was queued, however often a job is retried."""
+    return queued_at + timedelta(seconds=get_settings().video_max_wait_seconds)
 
 
 async def _check(generation_id: uuid.UUID, number: int, deadline: datetime) -> dict:
@@ -286,12 +284,17 @@ async def _check(generation_id: uuid.UUID, number: int, deadline: datetime) -> d
         free = FreeVideoRead(name)
         extension = ".webm" if name == "fake" else ".mp4"
 
-        async def download(url: str = result["video_url"]) -> tuple[dict, bytes]:
+        async def download(url: str = result.get("video_url", "")) -> tuple[dict, bytes]:
             return {}, await adapter.download(url)
 
-        _, cache_key = await gateway.call_file(
-            "video_result", free, (input_hash,), 0, download, extension
-        )
+        try:
+            _, cache_key = await gateway.call_file(
+                "video_result", free, (input_hash,), 0, download, extension
+            )
+        except (httpx.HTTPError, UserFacingError, ValueError, KeyError):
+            # The video is ready but did not arrive: fetch it again on the next check.
+            status = "unavailable"
+    if status == "done":
         target = f"stories/{story_id}/videos/{generation_id}/result{extension}"
         await asyncio.to_thread(get_storage().copy, cache_key, target)
         async with get_sessionmaker()() as session:
@@ -319,7 +322,9 @@ async def _check(generation_id: uuid.UUID, number: int, deadline: datetime) -> d
                 "number": number + 1,
                 "deadline": deadline.isoformat(),
             },
-            idempotency_key=f"{POLL_KIND}:{generation_id}:{number + 1}",
+            # Each job queues at most one next check, keyed by itself, so a retried
+            # submission starts a fresh chain instead of landing on an old finished check.
+            idempotency_key=f"{POLL_KIND}:{generation_id}:{gateway.CURRENT_JOB.get()}",
             # A failed check is not retried: the next one is already the retry.
             max_attempts=1,
             run_after=datetime.now(UTC) + timedelta(seconds=get_settings().video_poll_seconds),

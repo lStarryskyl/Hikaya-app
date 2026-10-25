@@ -9,6 +9,18 @@ from app.config import get_settings
 from app.errors import UserFacingError
 
 
+def _provider_message(response: httpx.Response) -> str:
+    """ElevenLabs' own explanation ({"detail": {"message": ...}} or {"detail": "..."})."""
+    try:
+        detail = response.json().get("detail")
+    except ValueError:
+        detail = None
+    if isinstance(detail, dict):
+        detail = detail.get("message") or detail.get("status")
+    text = str(detail or f"HTTP {response.status_code}").strip()
+    return text[:300]
+
+
 def unavailable_reason() -> str | None:
     """Why cloned voices cannot narrate with the current settings, or None when they can."""
     settings = get_settings()
@@ -58,6 +70,10 @@ class VoiceCloner:
                             ),
                         },
                         files={"files": ("sample.mp3", audio, "audio/mpeg")},
+                    )
+                if 400 <= response.status_code < 500:
+                    raise UserFacingError(
+                        "ElevenLabs refused the sample: " + _provider_message(response)
                     )
                 response.raise_for_status()
                 result = response.json()

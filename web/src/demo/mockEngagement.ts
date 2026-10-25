@@ -21,9 +21,14 @@ export function engagementFor(storyId: string): { likes: number; comments: numbe
   return { likes: 120 + (h % 1900), comments: 4 + ((h >>> 11) % 80) }
 }
 
-/** Placeholder avatars for invented people. Real accounts show initials instead. */
-export function mockAvatarUrl(seed: string, size = 80): string {
-  return `https://i.pravatar.cc/${size}?u=${encodeURIComponent(seed)}`
+/** The display name behind an invented person's seed: "layla-al-sayed" -> "Layla Al Sayed".
+ * Their avatars show initials, like real accounts; nothing is loaded from elsewhere. */
+export function mockPersonName(seed: string): string {
+  return seed
+    .split('-')
+    .filter(Boolean)
+    .map((part) => part[0].toUpperCase() + part.slice(1))
+    .join(' ')
 }
 
 export const sampleReflections = [

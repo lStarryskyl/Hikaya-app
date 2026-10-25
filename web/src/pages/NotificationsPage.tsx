@@ -6,7 +6,7 @@ import { Card, PillButton } from '../components/ui'
 import Photo from '../components/Photo'
 import { findPhoto, getPlaces } from '../discover'
 import Avatar from '../components/Avatar'
-import { mockAvatarUrl } from '../demo/mockEngagement'
+import { mockPersonName } from '../demo/mockEngagement'
 import { useApi } from '../useApi'
 
 type NotifKind = 'like' | 'comment' | 'story' | 'map' | 'system'
@@ -155,11 +155,7 @@ export default function NotificationsPage() {
                 }`}
               >
                 {n.avatarSeed ? (
-                  <Avatar
-                    src={mockAvatarUrl(n.avatarSeed, 80)}
-                    name={n.title}
-                    className="h-11 w-11"
-                  />
+                  <Avatar name={mockPersonName(n.avatarSeed)} className="h-11 w-11" />
                 ) : n.imageSeed ? (
                   <Photo
                     photo={findPhoto(places.data, n.imageSeed)}

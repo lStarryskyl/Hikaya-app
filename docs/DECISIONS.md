@@ -145,6 +145,8 @@ These exist on purpose while the build is in progress. Each closes with the tick
 
 - Transcription (`STT_PROVIDER`): ElevenLabs Scribe (`scribe_v2`, word timestamps, card budget) or Azure AI Speech fast transcription (`ar-JO` or `en-US`, phrase timestamps, Azure budget). Scribe's words are grouped into lines at sentence ends, pauses of 0.8 s and at most 12 s, so the player highlights readable lines; Azure's phrases are used as they come. With no language chosen, both detect it; detected Arabic is taken as Jordanian, the app's default, since neither tells a dialect from MSA. Audio events (laughter and the like) are left out. The cost is per audio hour.
 
+- Narration voices (`TTS_PROVIDER`): ElevenLabs (card budget) returns a timing for every character, which becomes each line's start and end, so a whole story is spoken in one call, or in parts under the per-request character limit, timed across the parts. Azure neural voices (`ar-JO-SanaNeural` by default, Azure budget) give no timings over REST, so narration speaks them line by line and measures each piece. Lines meet end to end and a pause belongs to the line just spoken. Voices are settings: ElevenLabs voice IDs belong to the account, so they must be chosen before narration can run there. The cost is per character.
+
 ## Narration and slideshow
 
 - Narration starts when the member submits, alongside the moderation check, so reviewers hear held stories too and no voice credit goes on drafts. (The spec said "once the text is ready"; changed on 2026-10-23 with the owner's agreement.) The story is published without waiting for either; the player shows what exists, and the author and staff see their progress there, with a retry for a failed one in any status.

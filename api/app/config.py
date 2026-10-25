@@ -85,6 +85,17 @@ class Settings(BaseSettings):
     azure_speech_endpoint: str = ""
     azure_speech_arabic_locale: str = "ar-JO"
     azure_stt_usd_per_hour: float = Field(0.36, ge=0)
+    # Narration voices (#14). ElevenLabs voice IDs belong to the account (choose them in the
+    # ElevenLabs voice library); Azure voices are names such as ar-JO-SanaNeural. Prices per
+    # 1,000 characters. ElevenLabs texts longer than the limit are spoken in parts.
+    elevenlabs_voice_arabic: str = ""
+    elevenlabs_voice_english: str = ""
+    elevenlabs_tts_model: str = "eleven_multilingual_v2"
+    elevenlabs_tts_max_chars: int = Field(9000, ge=100, le=40000)
+    elevenlabs_tts_usd_per_1k_chars: float = Field(0.08, ge=0)
+    azure_tts_voice_arabic: str = "ar-JO-SanaNeural"
+    azure_tts_voice_english: str = "en-US-JennyNeural"
+    azure_tts_usd_per_1k_chars: float = Field(0.015, ge=0)
     voice_clone_provider: str = "fake"
     elevenlabs_api_key: str = ""
     # Conservative reservation, configurable for the account's plan.

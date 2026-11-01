@@ -59,7 +59,7 @@ Every provider sits behind one interface. A setting picks the provider per step,
 | Step | Default | Fallback or alternative |
 | --- | --- | --- |
 | Speech to text | ElevenLabs Scribe | Azure Speech `ar-JO` |
-| Polish, translate, label | Azure (a GPT-class model in Azure AI Foundry) | none planned |
+| Polish, translate, label | OpenAI direct API (GPT-4.1 mini) | Azure AI Foundry |
 | Narration | ElevenLabs | Azure `ar-JO` neural voices (SanaNeural, TaimNeural) |
 | Voice cloning | ElevenLabs instant voice cloning | none |
 | Image to video | fal.ai (model chosen after a roughly 1 USD bake-off) | Higgsfield API, Gemini API Veo, any open-source model endpoint |
@@ -254,3 +254,13 @@ AI persona chat, reels, the 360 viewer, analytics dashboards, the visit planner 
 - Browser verification caught and fixed lazy staff-module initialization, untranslated feed/player tabs, signup password labelling, and mobile RTL grid overflow. The mobile overflow assertion and axe scans remain regression checks.
 - Local setup and coverage limits are documented in `docs/BROWSER_TESTS.md`. Live paid services and physical microphone capture are outside the deterministic CI suite.
 - Final local verification: 228 backend tests, 11 frontend unit tests and 3 Chromium journeys pass, along with type checks, lint, formatting and the production build. The optional MapLibre bundle still produces Vite's chunk-size warning. Hosted CI has not been triggered.
+
+## OpenAI alternative (2026-11-01)
+
+`LLM_PROVIDER=openai` selects direct OpenAI for polishing, translation and the same
+four moderation labels with short reasons. It preserves segment order/count and
+never translates into dialect. OpenAI charges the card budget shared with ElevenLabs
+and video, under the $25 total allowance. Azure remains available by setting.
+Paid text output is bounded and reservations use a conservative input upper bound;
+prices must be explicitly configured for the actual account. Live calls stay off
+until credentials, account rates and spending limits are confirmed.

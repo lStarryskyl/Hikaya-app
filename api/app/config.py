@@ -73,6 +73,12 @@ class Settings(BaseSettings):
     # Azure OpenAI (#12): polishing, translation and moderation. The deployment is the name
     # given to the model in Azure AI Foundry. Prices are per million tokens for that model
     # (defaults: gpt-5.4-mini, Global Standard, docs/research/speech-voice-and-llm.md).
+    # Direct OpenAI alternative; zero prices fail closed until explicitly configured.
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4.1-mini"
+    openai_max_output_tokens: int = Field(4096, ge=1, le=16384)
+    openai_input_usd_per_million: float = Field(0, ge=0, allow_inf_nan=False)
+    openai_output_usd_per_million: float = Field(0, ge=0, allow_inf_nan=False)
     azure_openai_endpoint: str = ""
     azure_openai_api_key: str = ""
     azure_openai_deployment: str = ""

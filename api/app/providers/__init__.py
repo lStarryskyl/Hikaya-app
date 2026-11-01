@@ -97,7 +97,7 @@ class ProviderUnavailable(UserFacingError):
     pass
 
 
-_NAMES = {"elevenlabs": "ElevenLabs", "azure": "Azure"}
+_NAMES = {"elevenlabs": "ElevenLabs", "azure": "Azure", "openai": "OpenAI"}
 
 
 def _not_connected(kind: str, name: str) -> ProviderUnavailable:
@@ -124,6 +124,10 @@ def language_model() -> LanguageModel:
     name = get_settings().llm_provider
     if name == "fake":
         return fake.FakeLanguageModel()
+    if name == "openai":
+        from app.providers.openai_llm import OpenAILanguageModel
+
+        return OpenAILanguageModel()
     if name == "azure":
         from app.providers.azure_llm import AzureLanguageModel
 

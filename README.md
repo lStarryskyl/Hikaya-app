@@ -21,6 +21,8 @@ cp .env.example .env      # then set SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD (and
 docker compose up --build
 ```
 
+To go live with ElevenLabs instead, run `scripts/prepare-env.sh` (it writes `.env` with ElevenLabs chosen, live AI on and staff passwords generated, and never overwrites an existing one), then fill in `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ARABIC` and `ELEVENLABS_VOICE_ENGLISH`.
+
 Open http://localhost:5173. The seven demo stories, their places and photos load on start. Sign up as a member, or sign in with the staff account you put in `.env`. The API is on http://localhost:8000 (`/health`, `/docs`).
 
 ## Develop without Docker

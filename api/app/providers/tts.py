@@ -53,6 +53,24 @@ def _raise_for_status(response: httpx.Response, service: str, key_env: str) -> N
     raise ProviderUnavailable(f"The {service} is unavailable right now.")
 
 
+# ElevenLabs' `detail.status` for a voice ID it does not know. A malformed ID is refused with
+# 400 `invalid_uid` (before the key is even checked), an unknown one with `voice_not_found`.
+ELEVENLABS_VOICE_ERRORS = ("invalid_uid", "voice_not_found")
+
+
+def _elevenlabs_voice_unknown(response: httpx.Response) -> bool:
+    """Whether ElevenLabs refused the voice ID itself, rather than the key or the text."""
+    if response.status_code == 404:
+        return True  # the voice is the only ID in the path
+    if response.status_code not in (400, 422):
+        return False
+    try:
+        detail = response.json().get("detail")
+    except (ValueError, AttributeError):
+        return False
+    return isinstance(detail, dict) and detail.get("status") in ELEVENLABS_VOICE_ERRORS
+
+
 async def _duration_ms(mp3: bytes) -> int:
     """How long an MP3 plays, measured with ffprobe."""
     with tempfile.NamedTemporaryFile(suffix=".mp3") as f:
@@ -92,6 +110,26 @@ class ElevenLabsTextToSpeech:
 
     def voice_for(self, language: str) -> str:
         return self.voices["english" if language == "english" else "arabic"]
+
+    def _unknown_voice(self, voice: str) -> ProviderUnavailable:
+        """Names the setting that holds the voice ID, or says it is a cloned voice."""
+        settings = [
+            env
+            for env, value in (
+                ("ELEVENLABS_VOICE_ARABIC", self.voices["arabic"]),
+                ("ELEVENLABS_VOICE_ENGLISH", self.voices["english"]),
+            )
+            if value == voice
+        ]
+        if not settings:
+            return ProviderUnavailable(
+                f"The {self.service} does not know this cloned voice; it may have been "
+                "deleted there. Choose another narrator."
+            )
+        return ProviderUnavailable(
+            f"The {self.service} does not recognise the voice ID in {' and '.join(settings)}; "
+            "copy the voice ID from your ElevenLabs voice library."
+        )
 
     def _parts(self, texts: list[str]) -> list[list[str]]:
         """Consecutive lines grouped so that each part stays within the character limit."""
@@ -136,6 +174,8 @@ class ElevenLabsTextToSpeech:
                 )
         except httpx.HTTPError as exc:
             raise ProviderUnavailable(f"The {self.service} could not be reached.") from exc
+        if _elevenlabs_voice_unknown(response):
+            raise self._unknown_voice(voice)
         _raise_for_status(response, self.service, "ELEVENLABS_API_KEY")
         try:
             body = response.json()

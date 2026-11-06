@@ -165,6 +165,57 @@ async def test_elevenlabs_errors(elevenlabs, monkeypatch, status, message):
     assert "el-test-key" not in str(caught.value)
 
 
+# ElevenLabs' own answers for a voice ID it does not know: a malformed ID is refused with 400
+# before the key is even checked (seen live on 2026-11-06), an unknown one with 404.
+INVALID_VOICE_ID = {
+    "detail": {
+        "type": "invalid_request",
+        "code": "bad_request",
+        "message": "An invalid ID has been received: 'voice-ar'.",
+        "status": "invalid_uid",
+    }
+}
+VOICE_NOT_FOUND = {
+    "detail": {"status": "voice_not_found", "message": "A voice with that voice_id was not found."}
+}
+
+
+@pytest.mark.parametrize(
+    ("status", "body"), [(400, INVALID_VOICE_ID), (422, INVALID_VOICE_ID), (404, VOICE_NOT_FOUND)]
+)
+@pytest.mark.parametrize(
+    ("language", "voice", "setting"),
+    [
+        ("jordanian", "voice-ar", "ELEVENLABS_VOICE_ARABIC"),
+        ("english", "voice-en", "ELEVENLABS_VOICE_ENGLISH"),
+    ],
+)
+async def test_an_unknown_voice_id_names_its_setting(
+    elevenlabs, monkeypatch, status, body, language, voice, setting
+):
+    mock_http(monkeypatch, lambda request: httpx.Response(status, json=body))
+    with pytest.raises(ProviderUnavailable) as caught:
+        await text_to_speech().speak(["line"], language, voice)
+    message = str(caught.value)
+    assert setting in message
+    assert "refused this text" not in message
+    assert "el-test-key" not in message
+
+
+async def test_an_unknown_cloned_voice_does_not_blame_the_settings(elevenlabs, monkeypatch):
+    mock_http(monkeypatch, lambda request: httpx.Response(404, json=VOICE_NOT_FOUND))
+    with pytest.raises(ProviderUnavailable, match="cloned voice") as caught:
+        await text_to_speech().speak(["line"], "jordanian", "a-cloned-voice-id")
+    assert "ELEVENLABS_VOICE" not in str(caught.value)
+
+
+@pytest.mark.parametrize("body", [{"detail": "x"}, {"detail": {"status": "invalid_text"}}, ["x"]])
+async def test_other_refusals_still_blame_the_text(elevenlabs, monkeypatch, body):
+    mock_http(monkeypatch, lambda request: httpx.Response(400, json=body))
+    with pytest.raises(UserFacingError, match="refused this text"):
+        await text_to_speech().speak(["line"], "english", "voice-en")
+
+
 def test_elevenlabs_cost_is_per_character(elevenlabs):
     assert text_to_speech().estimate_usd("speak", 1000) == Decimal("0.08")
 

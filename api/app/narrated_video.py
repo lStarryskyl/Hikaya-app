@@ -23,7 +23,7 @@ from decimal import Decimal
 import httpx
 from sqlalchemy import select
 
-from app import gateway, jobs
+from app import audio, gateway, jobs
 from app.assets import asset_of
 from app.config import get_settings
 from app.db import get_sessionmaker
@@ -786,6 +786,7 @@ async def _check(generation_id: uuid.UUID, index: int) -> str:
         generation = await session.get(VideoGeneration, generation_id)
         states = _states(generation)
         name, input_hash, folder = generation.provider, generation.input_hash, _folder(generation)
+        whole_clips = generation.payload.get("audio") == "omni"
     shot, count = states[index], len(states)
     adapter = provider(name)
     try:
@@ -823,9 +824,29 @@ async def _check(generation_id: uuid.UUID, index: int) -> str:
     changes: dict = {"file_key": clip_key}
     if index + 1 < count:
         changes["frame_key"] = f"{folder}/shot-{index}-end.webp"
-        await _frame(clip, demuxer, shot.span, changes["frame_key"])
+        # Past the clip's end, the frame is its last one (held): where a whole clip ends.
+        cut = shot.seconds + 0.5 if whole_clips else shot.span
+        await _frame(clip, demuxer, cut, changes["frame_key"])
     await _update(generation_id, index, progress=SHOT_READY, **changes)
     return "done"
+
+
+def _onto_clips(lines: list[Line], states: list[ShotState], lengths: list[float]) -> list[Line]:
+    """Line timings moved from the planned shots onto whole clips: each moment of a shot is
+    stretched to its clip's real length, so subtitles stay with the shot they belong to."""
+    starts = [sum(lengths[:i]) * 1000 for i in range(len(lengths))]
+
+    def moved(ms: int) -> int:
+        at = ms + LEAD_MS  # in video time
+        for state, start, length in zip(states, starts, lengths, strict=True):
+            if at <= state.end_ms:
+                within = max(0, at - state.start_ms) / max(state.end_ms - state.start_ms, 1)
+                return round(start + within * length * 1000) - LEAD_MS
+        return round(starts[-1] + lengths[-1] * 1000) - LEAD_MS
+
+    return [
+        replace(line, start_ms=moved(line.start_ms), end_ms=moved(line.end_ms)) for line in lines
+    ]
 
 
 async def _has_audio(path) -> bool:
@@ -853,20 +874,29 @@ async def _join(generation_id: uuid.UUID) -> dict:
     width, height = SIZES.get(data["aspect_ratio"], SIZES["16:9"])
     lines = [Line(**line) for line in data["lines"]]
     tail = TAIL_MS / 1000
-    total = states[-1].end_ms / 1000 + tail
-    voice_end = (lines[-1].end_ms + LEAD_MS) / 1000
-    fade = min(VOICE_FADE_MS / 1000, voice_end)
     demuxer = DEMUXERS[clip_extension(name)]
     clips = [storage.path(state.file_key) for state in states]
     omni_voice = data.get("audio") == "omni"
+    # With Omni's own voice each clip is kept whole: Omni paces its voice-over to the length it
+    # was asked for, so cutting a clip to the planned span cuts off its last words.
+    lengths = (
+        [await audio.duration_ms(clip) / 1000 for clip in clips]
+        if omni_voice
+        else [state.span for state in states]
+    )
+    if omni_voice:
+        lines = _onto_clips(lines, states, lengths)
+    total = sum(lengths) + tail
+    voice_end = (lines[-1].end_ms + LEAD_MS) / 1000
+    fade = min(VOICE_FADE_MS / 1000, voice_end)
     inputs = [arg for clip in clips for arg in ffmpeg_inputs(demuxer, [clip])]
     if not omni_voice:
         inputs += ffmpeg_inputs("mp3", [storage.path(data["audio_key"])])
     graph = []
-    for i, state in enumerate(states):
+    for i, length in enumerate(lengths):
         graph.append(
-            f"[{i}:v]tpad=stop_mode=clone:stop_duration={state.span:.3f},"
-            f"trim=duration={state.span:.3f},setpts=PTS-STARTPTS,fps=24,"
+            f"[{i}:v]tpad=stop_mode=clone:stop_duration={length:.3f},"
+            f"trim=duration={length:.3f},setpts=PTS-STARTPTS,fps=24,"
             f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
             f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p[v{i}]"
         )
@@ -888,13 +918,13 @@ async def _join(generation_id: uuid.UUID) -> dict:
         video = "[vout]"
     normalise = f"loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000,apad,atrim=duration={total:.3f}"
     if omni_voice:
-        # Omni's own audio (its voice-over and the scene's sounds), each shot cut to its span.
-        for i, state in enumerate(states):
+        # Omni's own audio (its voice-over and the scene's sounds), each clip whole.
+        for i, length in enumerate(lengths):
             graph.append(
                 f"[{i}:a]aformat=sample_rates=48000:channel_layouts=stereo,apad,"
-                f"atrim=duration={state.span:.3f},asetpts=PTS-STARTPTS[a{i}]"
+                f"atrim=duration={length:.3f},asetpts=PTS-STARTPTS[a{i}]"
                 if await _has_audio(clips[i])
-                else f"anullsrc=r=48000:cl=stereo,atrim=duration={state.span:.3f}[a{i}]"
+                else f"anullsrc=r=48000:cl=stereo,atrim=duration={length:.3f}[a{i}]"
             )
         sounds = "".join(f"[a{i}]" for i in range(len(states)))
         graph.append(f"{sounds}concat=n={len(states)}:v=0:a=1,{normalise}[aout]")

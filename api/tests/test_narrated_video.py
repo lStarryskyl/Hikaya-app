@@ -840,6 +840,19 @@ async def test_omni_voice_keeps_the_shots_own_sound(
     # Omni's own sound (the clips' 3 kHz tone) is kept; the ElevenLabs narration is not laid on.
     assert band_loudness(media, 3000, 2.0, 16.0) > -40
     assert band_loudness(media, 220, 2.0, 16.0) < -60
+    # Omni paces its voice to the length it was asked for, so every clip is kept whole (13 s
+    # and 8 s here, not the 12.3 s and 8 s planned): no words are cut at a shot's end.
+    assert probe(media)["seconds"] == pytest.approx(13 + 8 + TAIL_MS / 1000, abs=0.15)
+    generation = await session.get(VideoGeneration, uuid.UUID(generation_id))
+    captions = (
+        get_storage()
+        .path(f"stories/{story.id}/videos/{generation.id}/subtitles.ass")
+        .read_text(encoding="utf-8")
+    )
+    (line_three,) = [row for row in captions.splitlines() if "Line 3." in row]
+    # The second clip's first line starts where the first clip really ends (about 13 s).
+    starts = line_three.split(",")[1]
+    assert float(starts.split(":")[-1]) == pytest.approx(13.0, abs=0.1)
     # Each shot asks Omni for a voice-over of its own words, in the story's language.
     prompt = google.posts[0]["input"][1]["text"]
     assert "voice-over" in prompt and "Jordanian Arabic" in prompt

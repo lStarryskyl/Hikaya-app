@@ -240,6 +240,10 @@ class GeminiOmniVideo:
 
     async def submit(self, payload: dict) -> dict:
         headers = self.headers
+        # A single clip is 6 s; a narrated video's shots ask for their own length.
+        seconds = payload.get("seconds", 6)
+        if type(seconds) is not int or not 3 <= seconds <= 15:
+            raise UserFacingError("Gemini Omni makes shots of 3 to 15 seconds.")
         image = decode_data_url(payload["image_url"], "image/webp")
         body = {
             "model": payload["model"],
@@ -255,7 +259,7 @@ class GeminiOmniVideo:
                 "type": "video",
                 "aspect_ratio": payload["aspect_ratio"],
                 "resolution": "720p",
-                "duration": "6s",
+                "duration": f"{seconds}s",
             },
             "background": True,
         }

@@ -65,6 +65,8 @@ class Settings(BaseSettings):
     # thinking tokens. VIDEO_USD_PER_SECOND and VIDEO_ESTIMATE_USD do not apply to it.
     gemini_api_key: str = ""
     gemini_omni_usd_per_second: float = Field(0.08, ge=0)
+    # A narrated AI video lasts as long as its soundtrack, up to this many seconds.
+    narrated_video_max_seconds: int = Field(60, ge=6, le=300)
     custom_video_endpoint: str = ""
     custom_video_token: str = ""
     custom_video_estimate_usd: float = Field(0.0, ge=0)

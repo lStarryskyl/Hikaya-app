@@ -6,6 +6,7 @@ import hashlib
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -15,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import gateway, jobs, photos
+from app import gateway, jobs, narrated_video, photos
 from app.auth import require_roles
 from app.config import get_settings
 from app.db import get_session, get_sessionmaker
@@ -38,6 +39,10 @@ class VideoIn(BaseModel):
     )
     aspect_ratio: str = Field(default="16:9", pattern=r"^(16:9|9:16)$")
     seed: int = Field(default=42, ge=0, le=2147483647)
+    # "narrated": shots planned from the story's soundtrack, joined, voiced and subtitled.
+    mode: Literal["clip", "narrated"] = "clip"
+    soundtrack: Literal["narration", "recording"] = "narration"
+    subtitles: bool = True
 
 
 async def output(session: AsyncSession, generation: VideoGeneration) -> dict:
@@ -56,6 +61,10 @@ async def output(session: AsyncSession, generation: VideoGeneration) -> dict:
         "error": error,
         "demo": generation.provider == "fake",
         "video_url": f"/api/v1/staff/videos/{generation.id}/media" if generation.file_key else None,
+        "mode": generation.payload.get("mode", "clip"),
+        "shots": len(generation.shots),
+        "seconds": generation.payload.get("seconds"),
+        "retryable": narrated_video.retryable(generation, job),
     }
 
 
@@ -65,7 +74,139 @@ async def config(user: User = Depends(staff)) -> dict:
         "enabled": get_settings().enable_ai_video,
         "default_provider": get_settings().video_provider,
         "providers": configurations(),
+        "narrated_max_seconds": get_settings().narrated_video_max_seconds,
     }
+
+
+def _choose(body: VideoIn) -> dict:
+    selected = next((item for item in configurations() if item["id"] == body.provider), None)
+    if not selected or not selected["available"] or body.model not in selected["models"]:
+        raise HTTPException(422, "Choose an available provider and supported model.")
+    return selected
+
+
+async def _plan_narrated(
+    session: AsyncSession, body: VideoIn, selected: dict
+) -> tuple[Story, narrated_video.Planned]:
+    """The plan for a narrated video, refused (422) when it cannot be made or would not fit
+    the spending budget. Reads the database only; no provider is called."""
+    if not selected.get("max_shot_seconds"):
+        raise HTTPException(
+            422,
+            "This provider makes fixed-length clips and is not offered for narrated videos; "
+            "choose Gemini Omni Flash.",
+        )
+    story = await session.get(Story, body.story_id)
+    if not story:
+        raise HTTPException(404, "Story not found.")
+    try:
+        planned = await narrated_video.plan_for(
+            session, story, body.provider, selected["max_shot_seconds"], body.soundtrack
+        )
+    except UserFacingError as exc:
+        raise HTTPException(422, str(exc)) from None
+    budget = provider(body.provider).budget
+    if budget and planned.estimate > 0:
+        try:
+            await gateway.check_room(budget, planned.estimate)
+        except gateway.SpendingLimit as exc:
+            raise HTTPException(
+                422,
+                f"This video (about {planned.estimate:.2f} USD) would pass the {exc.which} "
+                "spending limit, so nothing was queued.",
+            ) from None
+    return story, planned
+
+
+@router.post("/plan")
+async def plan_video(
+    body: VideoIn, user: User = Depends(staff), session: AsyncSession = Depends(get_session)
+) -> dict:
+    """What a narrated video would be (shots, length, lines covered, estimated cost) before
+    anything is queued or paid for."""
+    _, planned = await _plan_narrated(session, body, _choose(body))
+    return planned.summary()
+
+
+async def _generate_narrated(
+    session: AsyncSession, body: VideoIn, selected: dict, user: User
+) -> dict:
+    story, planned = await _plan_narrated(session, body, selected)
+    images = await photos.slideshow_images(session, story)
+    if not images and body.provider != "fake":
+        raise HTTPException(422, "Add a story photo before generating an AI video.")
+    storage = get_storage()
+    image_bytes, image_hash = None, ""
+    if images:
+        if not storage.exists(images[0]):
+            raise HTTPException(422, "The story photo is missing. Choose another photo.")
+        image_bytes = await asyncio.to_thread(storage.path(images[0]).read_bytes)
+        image_hash = hashlib.sha256(image_bytes).hexdigest()
+    sound = await asyncio.to_thread(storage.path(planned.soundtrack_key).read_bytes)
+    direction = body.prompt.strip()
+    payload = {
+        "mode": "narrated",
+        "model": body.model,
+        "prompt": direction,
+        "aspect_ratio": body.aspect_ratio if selected.get("supports_aspect", True) else "16:9",
+        "seed": body.seed if selected.get("supports_seed", True) else 0,
+        "soundtrack": body.soundtrack,
+        "subtitles": body.subtitles,
+        "rtl": planned.rtl,
+        "lines": narrated_video.payload_lines(planned),
+        "lines_total": planned.lines_total,
+        "seconds": planned.seconds,
+    }
+    digest = hashlib.sha256(
+        json.dumps(
+            [str(story.id), body.provider, payload, image_hash, hashlib.sha256(sound).hexdigest()],
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
+    existing = (
+        await session.execute(select(VideoGeneration).where(VideoGeneration.input_hash == digest))
+    ).scalar_one_or_none()
+    if existing:
+        return await output(session, existing)
+    generation_id = uuid.uuid4()
+    folder = f"stories/{story.id}/videos/{generation_id}"
+    image_key = f"{folder}/input.webp" if image_bytes is not None else None
+    if image_key:
+        await asyncio.to_thread(storage.write_bytes, image_key, image_bytes)
+    # The soundtrack is copied: a revoked voice deletes its narrations, not this video's.
+    payload["audio_key"] = f"{folder}/soundtrack.mp3"
+    await asyncio.to_thread(storage.write_bytes, payload["audio_key"], sound)
+    shots = narrated_video.shot_states(planned, story.title, story.place_name, direction)
+    try:
+        job = await jobs.enqueue(
+            session,
+            narrated_video.KIND,
+            {
+                "generation_id": str(generation_id),
+                "deadline": narrated_video.deadline_for(len(shots)).isoformat(),
+            },
+            idempotency_key=f"{narrated_video.KIND}:{digest}",
+            max_attempts=1,
+            commit=False,
+        )
+        generation = VideoGeneration(
+            id=generation_id,
+            story_id=story.id,
+            actor_id=user.id,
+            provider=body.provider,
+            payload=payload,
+            image_key=image_key,
+            input_hash=digest,
+            job_id=job.id,
+            shots=shots,
+        )
+        session.add(generation)
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        storage.delete_tree(folder)
+        raise HTTPException(409, "This video was already queued. Refresh the job list.") from None
+    return await output(session, generation)
 
 
 @router.get("")
@@ -86,9 +227,9 @@ async def generate(
 ) -> dict:
     if not get_settings().enable_ai_video:
         raise HTTPException(503, "AI video generation is disabled for this demo.")
-    selected = next((item for item in configurations() if item["id"] == body.provider), None)
-    if not selected or not selected["available"] or body.model not in selected["models"]:
-        raise HTTPException(422, "Choose an available provider and supported model.")
+    selected = _choose(body)
+    if body.mode == "narrated":
+        return await _generate_narrated(session, body, selected, user)
     story = await session.get(Story, body.story_id)
     if not story:
         raise HTTPException(404, "Story not found.")
@@ -186,9 +327,30 @@ async def video_media(
         raise HTTPException(404, "The video is not ready.")
     return FileResponse(
         get_storage().path(generation.file_key),
-        media_type="video/webm" if generation.provider == "fake" else "video/mp4",
+        # A narrated video is always a joined MP4, whichever provider made its shots.
+        media_type="video/webm" if generation.file_key.endswith(".webm") else "video/mp4",
         headers={"Cache-Control": "private, no-store"},
     )
+
+
+@router.post("/{generation_id}/retry", status_code=202)
+async def retry_video(
+    generation_id: uuid.UUID,
+    user: User = Depends(staff),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Go on with a failed narrated video from where it stopped."""
+    generation = await find_generation(session, generation_id)
+    job = await session.get(Job, generation.job_id) if generation.job_id else None
+    if not narrated_video.retryable(generation, job):
+        raise HTTPException(
+            409,
+            "This video cannot be retried: it is not a failed narrated video, or a shot's "
+            "submission needs to be checked with the provider first.",
+        )
+    await narrated_video.retry(session, generation)
+    await session.commit()
+    return await output(session, generation)
 
 
 # Checking on a submitted video is its own short job: each check asks the provider once and,

@@ -1,9 +1,21 @@
 import { useEffect, useState } from 'react'
 import { ApiError } from '../api'
 import { getFeed } from '../discover'
-import { t, useLocale } from '../i18n'
+import { message, t, useLocale } from '../i18n'
 import { useApi } from '../useApi'
-import { generateVideo, getVideoConfig, getVideoJobs } from '../videos'
+import {
+  formatLength,
+  generateVideo,
+  getVideoConfig,
+  getVideoJobs,
+  planVideo,
+  retryVideo,
+  type NarratedPlan,
+  type Soundtrack,
+  type VideoMode,
+} from '../videos'
+
+type PlanState = { loading: boolean; data?: NarratedPlan; error?: string }
 
 export default function VideoConsole() {
   useLocale()
@@ -19,9 +31,62 @@ export default function VideoConsole() {
   const [prompt, setPrompt] = useState('A slow, respectful cinematic view of this heritage place.')
   const [aspect, setAspect] = useState<'16:9' | '9:16'>('16:9')
   const [seed, setSeed] = useState('42')
+  const [mode, setMode] = useState<VideoMode>('clip')
+  const [soundtrack, setSoundtrack] = useState<Soundtrack>('narration')
+  const [subtitles, setSubtitles] = useState(true)
+  const [plan, setPlan] = useState<PlanState>({ loading: false })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const pending = jobs.data?.some((job) => job.status === 'queued' || job.status === 'running')
+  // Narrated videos need a provider that makes shots of a chosen length.
+  const canNarrate = selected?.max_shot_seconds != null
+  const narrated = mode === 'narrated' && canNarrate
+  const chosenModel = model || selected?.models[0] || ''
+  const planReady = !narrated || (!plan.loading && !plan.error && plan.data !== undefined)
+  useEffect(() => {
+    if (!narrated || !storyId || !chosenModel) {
+      setPlan({ loading: false })
+      return
+    }
+    // Show the shots and the cost before anything is queued; a stale answer is ignored.
+    let current = true
+    setPlan({ loading: true })
+    const timer = window.setTimeout(() => {
+      planVideo({
+        story_id: storyId,
+        provider: selectedProvider,
+        model: chosenModel,
+        aspect_ratio: aspect,
+        mode: 'narrated',
+        soundtrack,
+        subtitles,
+      }).then(
+        (data) => {
+          if (current) setPlan({ loading: false, data })
+        },
+        (e: unknown) => {
+          if (current)
+            setPlan({
+              loading: false,
+              error: e instanceof ApiError ? e.message : 'The video could not be planned.',
+            })
+        },
+      )
+    }, 300)
+    return () => {
+      current = false
+      window.clearTimeout(timer)
+    }
+  }, [narrated, storyId, selectedProvider, chosenModel, soundtrack, subtitles, aspect])
+  async function retry(id: string) {
+    setError('')
+    try {
+      await retryVideo(id)
+      setRevision((r) => r + 1)
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : t('The video could not be retried.'))
+    }
+  }
   useEffect(() => {
     if (!pending) return
     const timer = window.setInterval(() => setRevision((r) => r + 1), 1500)
@@ -29,7 +94,7 @@ export default function VideoConsole() {
   }, [pending])
   async function submit(event: React.FormEvent) {
     event.preventDefault()
-    if (busy || !selected?.available || !configuration.data?.enabled) return
+    if (busy || !selected?.available || !configuration.data?.enabled || !planReady) return
     setError('')
     setBusy(true)
     try {
@@ -40,6 +105,8 @@ export default function VideoConsole() {
         prompt,
         aspect_ratio: aspect,
         seed: Number(seed),
+        mode: narrated ? 'narrated' : 'clip',
+        ...(narrated ? { soundtrack, subtitles } : {}),
       })
       setRevision((r) => r + 1)
     } catch (e) {
@@ -125,6 +192,51 @@ export default function VideoConsole() {
           </select>
         </label>
         <label className="text-sm">
+          {t('Video type')}
+          <select
+            value={narrated ? 'narrated' : 'clip'}
+            onChange={(event) => setMode(event.target.value as VideoMode)}
+            className={field}
+          >
+            <option value="clip">{t('Short clip (6 s)')}</option>
+            <option value="narrated" disabled={!canNarrate}>
+              {message('Narrated video (story soundtrack, up to {seconds} s)', {
+                seconds: configuration.data?.narrated_max_seconds ?? 60,
+              })}
+            </option>
+          </select>
+        </label>
+        {narrated ? (
+          <label className="text-sm">
+            {t('Soundtrack')}
+            <select
+              value={soundtrack}
+              onChange={(event) => setSoundtrack(event.target.value as Soundtrack)}
+              className={field}
+            >
+              <option value="narration">{t('Story narration')}</option>
+              <option value="recording">{t("Storyteller's recording")}</option>
+            </select>
+          </label>
+        ) : (
+          selected &&
+          !canNarrate && (
+            <p className="self-end text-sm text-muted2">
+              {t('Narrated videos need Gemini Omni Flash or the offline demo.')}
+            </p>
+          )
+        )}
+        {narrated && (
+          <label className="flex items-center gap-2 text-sm sm:col-span-2">
+            <input
+              type="checkbox"
+              checked={subtitles}
+              onChange={(event) => setSubtitles(event.target.checked)}
+            />
+            {t('Burn in subtitles')}
+          </label>
+        )}
+        <label className="text-sm">
           {t('Aspect ratio')}
           <select
             value={aspect}
@@ -164,12 +276,42 @@ export default function VideoConsole() {
             {t(selected.reason)}
           </p>
         )}
+        {narrated && storyId && (
+          <p
+            role="status"
+            className={`text-sm sm:col-span-2 ${plan.error ? 'text-terracotta-dark' : 'text-muted2'}`}
+          >
+            {plan.loading
+              ? t('Planning the video…')
+              : plan.error
+                ? t(plan.error)
+                : plan.data &&
+                  message(
+                    'Shots: {shots} · Length: {length} · Lines covered: {lines} of {total} · About {usd} USD reserved',
+                    {
+                      shots: plan.data.shots.length,
+                      length: formatLength(plan.data.seconds),
+                      lines: plan.data.lines,
+                      total: plan.data.lines_total,
+                      usd: plan.data.estimate_usd,
+                    },
+                  )}
+          </p>
+        )}
         <button
           type="submit"
-          disabled={busy || !storyId || !selected?.available || !configuration.data?.enabled}
+          disabled={
+            busy || !storyId || !selected?.available || !configuration.data?.enabled || !planReady
+          }
           className="w-fit rounded-full bg-terracotta px-4 py-2 text-cream disabled:opacity-50"
         >
-          {t(busy ? 'Queuing preview…' : 'Generate video preview')}
+          {t(
+            busy
+              ? 'Queuing preview…'
+              : narrated
+                ? 'Generate narrated video'
+                : 'Generate video preview',
+          )}
         </button>
       </form>
       {(error || configuration.error || stories.error || jobs.error) && (
@@ -181,6 +323,14 @@ export default function VideoConsole() {
         {jobs.data?.map((job) => (
           <article key={job.id} className="rounded-lg border border-border p-4">
             <h3 className="font-medium">{job.model}</h3>
+            {job.mode === 'narrated' && (
+              <p className="text-sm text-muted2">
+                {message('Narrated video · Shots: {shots} · Length: {length}', {
+                  shots: job.shots ?? 0,
+                  length: formatLength(job.seconds ?? 0),
+                })}
+              </p>
+            )}
             <p role="status" className="my-2 text-sm">
               {t(job.progress)} ·{' '}
               {t(
@@ -205,6 +355,15 @@ export default function VideoConsole() {
               <p role="alert" className="text-sm text-terracotta-dark">
                 {t(job.error)}
               </p>
+            )}
+            {job.status === 'failed' && job.retryable && (
+              <button
+                type="button"
+                onClick={() => void retry(job.id)}
+                className="mt-2 w-fit rounded-full border border-terracotta px-3 py-1 text-sm text-terracotta-dark"
+              >
+                {t('Retry from the failed shot')}
+              </button>
             )}
             {job.video_url && (
               <video

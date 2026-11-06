@@ -71,6 +71,7 @@ class LiveAIOff(UserFacingError):
 
 class SpendingLimit(UserFacingError):
     def __init__(self, which: str) -> None:
+        self.which = which
         super().__init__(f"The {which} spending limit has been reached, so this step was not run.")
 
 
@@ -78,23 +79,38 @@ def cache_key(operation: str, provider: str, parts: tuple[str, ...]) -> str:
     return hashlib.sha256("\x1f".join((operation, provider, *parts)).encode()).hexdigest()
 
 
-async def _reserve(provider: str, operation: str, budget: str, estimate: Decimal) -> uuid.UUID:
+async def _over(session, budget: str, estimate: Decimal) -> str | None:
+    """Which cap `estimate` more would pass now ("total", "daily" or "Azure"), or None."""
     settings = get_settings()
+    spent = ledger_total()
+    active = (SpendEntry.budget == budget) & counted()
+    total = (await session.execute(select(spent).where(active))).scalar_one()
+    today = (await session.execute(select(spent).where(active, since_midnight()))).scalar_one()
+    if budget == "card":
+        if total + estimate > Decimal(str(settings.spend_cap_usd_total)):
+            return "total"
+        if today + estimate > Decimal(str(settings.spend_cap_usd_daily)):
+            return "daily"
+        return None
+    if total + estimate > Decimal(str(settings.spend_cap_usd_azure)):
+        return "Azure"
+    return None
+
+
+async def check_room(budget: str, estimate: Decimal) -> None:
+    """Refuse up front (SpendingLimit) work whose whole estimate would pass a cap now, such as
+    a video of several paid shots. Reserves nothing: each call still reserves for itself."""
+    async with get_sessionmaker()() as session:
+        over = await _over(session, budget, estimate)
+    if over:
+        raise SpendingLimit(over)
+
+
+async def _reserve(provider: str, operation: str, budget: str, estimate: Decimal) -> uuid.UUID:
     async with get_sessionmaker()() as session:
         # One reservation at a time, so two workers cannot both squeeze under a cap.
         await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('hikaya-spend'))"))
-        spent = ledger_total()
-        active = (SpendEntry.budget == budget) & counted()
-        total = (await session.execute(select(spent).where(active))).scalar_one()
-        today = (await session.execute(select(spent).where(active, since_midnight()))).scalar_one()
-        over = None
-        if budget == "card":
-            if total + estimate > Decimal(str(settings.spend_cap_usd_total)):
-                over = "total"
-            elif today + estimate > Decimal(str(settings.spend_cap_usd_daily)):
-                over = "daily"
-        elif total + estimate > Decimal(str(settings.spend_cap_usd_azure)):
-            over = "Azure"
+        over = await _over(session, budget, estimate)
         entry = SpendEntry(
             provider=provider,
             operation=operation,

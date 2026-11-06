@@ -368,3 +368,20 @@ async def test_gemini_omni_wrong_key_is_named_not_blamed_on_the_prompt(omni, mon
     with pytest.raises(UserFacingError, match="GEMINI_API_KEY") as caught:
         await provider("gemini_omni").submit(OMNI_PAYLOAD)
     assert "blocked" not in str(caught.value)
+
+
+@pytest.mark.parametrize(("seconds", "asked"), [(15, "15s"), (3, "3s"), (None, "6s")])
+async def test_gemini_omni_asks_for_the_shot_length(omni, monkeypatch, seconds, asked):
+    accepted = {"id": "v1_abc", "status": "in_progress"}
+    seen = mock_http(monkeypatch, lambda request: httpx.Response(200, json=accepted))
+    payload = dict(OMNI_PAYLOAD) if seconds is None else {**OMNI_PAYLOAD, "seconds": seconds}
+    await provider("gemini_omni").submit(payload)
+    assert json.loads(seen[0].content)["response_format"]["duration"] == asked
+
+
+@pytest.mark.parametrize("seconds", [2, 16, "15"])
+async def test_gemini_omni_refuses_a_length_it_cannot_make(omni, monkeypatch, seconds):
+    seen = mock_http(monkeypatch, lambda request: httpx.Response(500))
+    with pytest.raises(UserFacingError, match="3 to 15"):
+        await provider("gemini_omni").submit({**OMNI_PAYLOAD, "seconds": seconds})
+    assert seen == []

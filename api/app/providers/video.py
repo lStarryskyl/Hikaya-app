@@ -177,6 +177,8 @@ def configurations() -> list[dict]:
             "models": ["demo"],
             "available": True,
             "reason": "",
+            # Narrated videos: the longest shot. The demo clip is held to any length.
+            "max_shot_seconds": 15,
         },
         {
             "id": "fal",
@@ -221,6 +223,7 @@ def configurations() -> list[dict]:
             "models": [OMNI_MODEL],
             "available": bool(settings.gemini_api_key and settings.live_ai_enabled),
             "supports_seed": False,
+            "max_shot_seconds": 15,
             "reason": (
                 "Set GEMINI_API_KEY (a Google AI Studio key on the paid tier) and "
                 "LIVE_AI_ENABLED. Omni takes no seed."

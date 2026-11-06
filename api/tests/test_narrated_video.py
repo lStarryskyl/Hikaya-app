@@ -148,6 +148,7 @@ def test_each_shot_prompt_carries_its_words_and_the_continuity():
     later = shot_prompt(1, 4, "Petra at dawn", "Petra", "They were masters of water.", "Slow pan")
     assert "Shot 1 of 4" in first and "photo" in first
     assert "Shot 2 of 4" in later and "previous shot" in later
+    assert "even when the scene moves" in later
     assert "They were masters of water." in later and "Slow pan" in later
     assert "Petra at dawn" in later
     assert "No one speaks" in later
@@ -450,13 +451,11 @@ async def test_a_narrated_video_is_chained_joined_voiced_and_subtitled(
     assert chained != base64.b64decode(first["input"][0]["data"])
     assert "Shot 1 of 2" in first["input"][1]["text"]
     assert "Line 0." in first["input"][1]["text"] and "Line 3." not in first["input"][1]["text"]
-    # The second shot starts from the cut frame and also gets the reference frame of the
-    # people from the first shot; the prompt says which image is which.
-    assert len(first["input"]) == 2 and len(second["input"]) == 3
-    reference = base64.b64decode(second["input"][1]["data"])
-    assert reference[:4] == b"RIFF" and reference != chained
-    prompt = second["input"][2]["text"]
-    assert "Shot 2 of 2" in prompt and "second image" in prompt
+    # One image per shot: Omni reads a second image as the shot's last frame (seen live), so
+    # the people's look is carried by the opening frame and the prompt, not a reference.
+    assert len(first["input"]) == 2 and len(second["input"]) == 2
+    prompt = second["input"][1]["text"]
+    assert "Shot 2 of 2" in prompt and "same faces, hair and clothes" in prompt
     assert "Line 3." in prompt and "Line 4." in prompt
 
     media = await client.get(done["video_url"])
@@ -471,7 +470,6 @@ async def test_a_narrated_video_is_chained_joined_voiced_and_subtitled(
     folder = f"stories/{story.id}/videos/{generation.id}"
     captions = get_storage().path(f"{folder}/subtitles.ass").read_text(encoding="utf-8")
     assert "Line 4." in captions and "سطر 4." in captions
-    assert reference == get_storage().path(f"{folder}/reference.webp").read_bytes()
     assert await ledger(session) == [Decimal("1.04"), Decimal("0.64")]
 
 
@@ -521,7 +519,7 @@ async def test_a_failed_shot_is_retried_without_redoing_finished_ones(
     assert done["status"] == "done", done
     # Shot 1 was not made again; shot 2 was submitted once more as a new paid attempt.
     assert len(google.posts) == 3
-    assert google.posts[1]["input"][:2] == google.posts[2]["input"][:2]
+    assert google.posts[1]["input"][0] == google.posts[2]["input"][0]
     assert await ledger(session) == [Decimal("1.04"), Decimal("0.64"), Decimal("0.64")]
 
 

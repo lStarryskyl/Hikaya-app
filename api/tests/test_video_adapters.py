@@ -387,17 +387,13 @@ async def test_gemini_omni_refuses_a_length_it_cannot_make(omni, monkeypatch, se
     assert seen == []
 
 
-async def test_gemini_omni_sends_a_reference_image_after_the_opening_frame(omni, monkeypatch):
-    accepted = {"id": "v1_abc", "status": "in_progress"}
-    seen = mock_http(monkeypatch, lambda request: httpx.Response(200, json=accepted))
-    reference = b"RIFF\x00\x00\x00\x00WEBPreference"
-    await provider("gemini_omni").submit(
-        {
-            **OMNI_PAYLOAD,
-            "reference_url": "data:image/webp;base64," + base64.b64encode(reference).decode(),
-        }
-    )
-    body = json.loads(seen[0].content)
-    assert [part["type"] for part in body["input"]] == ["image", "image", "text"]
-    assert base64.b64decode(body["input"][0]["data"]) == WEBP
-    assert base64.b64decode(body["input"][1]["data"]) == reference
+async def test_gemini_omni_failure_names_googles_reason(omni, monkeypatch):
+    failed = {
+        "id": "v1_abc",
+        "status": "failed",
+        "errors": [{"code": "INVALID_ARGUMENT", "message": "There was a problem processing."}],
+    }
+    mock_http(monkeypatch, lambda request: httpx.Response(200, json=failed))
+    with pytest.raises(UserFacingError, match="INVALID_ARGUMENT: There was a problem") as caught:
+        await provider("gemini_omni").poll({"interaction": "v1_abc"})
+    assert "safety" not in str(caught.value)

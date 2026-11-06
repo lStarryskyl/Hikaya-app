@@ -2,9 +2,9 @@
 
 The story's soundtrack (its narration, or the storyteller's recording) is the script: its
 timed lines are cut into shots at line boundaries, the first shot is made from the story
-photo and each later one from the frame where the previous shot is cut (with a reference frame
-of the people from the first shot), and FFmpeg joins the shots, lays the soundtrack over them
-(the provider's own sound kept low and ducked under the voice) and burns in subtitles.
+photo and each later one from the frame where the previous shot is cut, and FFmpeg joins the
+shots, lays the soundtrack over them (the provider's own sound kept low and ducked under the
+voice) and burns in subtitles.
 
 Planning happens in the web request and calls no provider. Everything else runs in worker
 jobs, one step per job (submit a shot, check it once, or join them), so the worker is never
@@ -16,7 +16,7 @@ import base64
 import math
 import re
 import uuid
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, fields, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -39,7 +39,6 @@ KIND = "narrated_video"
 LEAD_MS = 300  # picture before the first word
 TAIL_MS = 600  # the last frame held after the last word (not asked of the provider)
 VOICE_FADE_MS = 120  # the voice fades out at the end of the last line the video covers
-REFERENCE_AT = 0.4  # where in the first shot the reference frame of the people is taken
 RLE, PDF = "‫", "‬"  # right-to-left embedding around Arabic subtitle lines
 SIZES = {"16:9": (1280, 720), "9:16": (720, 1280)}
 DEMUXERS = {".webm": "matroska", ".mp4": "mov"}
@@ -131,14 +130,16 @@ def plan_shots(
 
 
 def shot_prompt(index: int, count: int, title: str, place: str, words: str, direction: str) -> str:
-    """One shot's prompt: what is said during it, and how it continues the film. A later shot
-    gets two images, and Omni has no field for image roles, so the prompt names them."""
+    """One shot's prompt: what is said during it, and how it continues the film. Each shot
+    gets one image: Omni reads a second image as the shot's last frame (seen live on
+    2026-11-06), so the people's look is carried by the opening frame and by this prompt."""
     continuity = (
         "Start from the provided photo."
         if index == 0
-        else "Two images are given. The first image is the last frame of the previous shot: "
-        "start exactly from it, so the cut is seamless. The second image shows how the people "
-        "in this film look: keep their faces, hair and clothes exactly the same."
+        else "This shot continues straight on from the previous shot: the image given is its "
+        "last frame, so start exactly from it and the cut is seamless. Keep the same people "
+        "with the same faces, hair and clothes as in that image, even when the scene moves to "
+        "another place."
     )
     return "\n".join(
         [
@@ -320,7 +321,6 @@ class ShotState:
     failed: bool = False  # the provider reported the job failed, cancelled or filtered
     file_key: str | None = None
     frame_key: str | None = None  # where the next shot starts
-    reference_key: str | None = None  # first shot only: how the people look
 
     @property
     def uncertain(self) -> bool:
@@ -335,8 +335,15 @@ class ShotState:
         return (input_hash, f"shot-{index}", f"try-{self.attempt}")
 
 
+_SHOT_FIELDS = {f.name for f in fields(ShotState)}
+
+
 def _states(generation: VideoGeneration) -> list[ShotState]:
-    return [ShotState(**shot) for shot in generation.shots]
+    # Fields an earlier version stored and no longer uses are ignored.
+    return [
+        ShotState(**{k: v for k, v in shot.items() if k in _SHOT_FIELDS})
+        for shot in generation.shots
+    ]
 
 
 def _store(generation: VideoGeneration, states: list[ShotState]) -> None:
@@ -554,7 +561,6 @@ async def _submit(generation_id: uuid.UUID, index: int) -> None:
         states = _states(generation)
         shot = states[index]
         image_key = generation.image_key if index == 0 else states[index - 1].frame_key
-        reference_key = states[0].reference_key if index > 0 else None
         name, data, input_hash = generation.provider, generation.payload, generation.input_hash
         # Marked before the call: if the answer is lost, the shot is known to be uncertain.
         states[index] = replace(shot, submitted=True)
@@ -571,8 +577,6 @@ async def _submit(generation_id: uuid.UUID, index: int) -> None:
     }
     if image_key:
         arguments["image_url"] = await _data_url(image_key)
-    if reference_key:
-        arguments["reference_url"] = await _data_url(reference_key)
     adapter = provider(name)
     try:
         request = await gateway.call(
@@ -613,9 +617,8 @@ async def _frame(clip, demuxer: str, at: float, key: str) -> None:
 
 
 async def _check(generation_id: uuid.UUID, index: int) -> str:
-    """Ask the provider once about a shot; when ready, store it, the frame to continue from
-    and (first shot) the reference frame of the people. Returns running, queued, unavailable
-    or done."""
+    """Ask the provider once about a shot; when ready, store it and the frame to continue
+    from. Returns running, queued, unavailable or done."""
     async with get_sessionmaker()() as session:
         generation = await session.get(VideoGeneration, generation_id)
         states = _states(generation)
@@ -658,9 +661,6 @@ async def _check(generation_id: uuid.UUID, index: int) -> str:
     if index + 1 < count:
         changes["frame_key"] = f"{folder}/shot-{index}-end.webp"
         await _frame(clip, demuxer, shot.span, changes["frame_key"])
-        if index == 0:
-            changes["reference_key"] = f"{folder}/reference.webp"
-            await _frame(clip, demuxer, shot.span * REFERENCE_AT, changes["reference_key"])
     await _update(generation_id, index, progress=SHOT_READY, **changes)
     return "done"
 

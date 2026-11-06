@@ -245,22 +245,16 @@ class GeminiOmniVideo:
         shortest, longest = self.shot_seconds
         if type(seconds) is not int or not shortest <= seconds <= longest:
             raise NotStarted(f"Gemini Omni makes shots of {shortest} to {longest} seconds.")
-        # The opening frame, then (for a later shot of a narrated video) a reference frame of
-        # the people; Omni has no field for image roles, so the prompt says which is which.
-        images = [payload["image_url"]] + (
-            [payload["reference_url"]] if payload.get("reference_url") else []
-        )
+        # One image: the opening frame. Omni reads a second image as the last frame.
+        image = decode_data_url(payload["image_url"], "image/webp")
         body = {
             "model": payload["model"],
             "input": [
-                *(
-                    {
-                        "type": "image",
-                        "data": base64.b64encode(decode_data_url(url, "image/webp")).decode(),
-                        "mime_type": "image/webp",
-                    }
-                    for url in images
-                ),
+                {
+                    "type": "image",
+                    "data": base64.b64encode(image).decode(),
+                    "mime_type": "image/webp",
+                },
                 {"type": "text", "text": payload["prompt"]},
             ],
             "response_format": {
@@ -295,8 +289,14 @@ class GeminiOmniVideo:
         if status == "in_progress":
             return {"status": "running"}
         if status in {"failed", "cancelled"}:
+            # Google's own reason when it gives one, e.g. "INVALID_ARGUMENT: ...".
+            errors = data.get("errors") if isinstance(data.get("errors"), list) else []
+            first = errors[0] if errors and isinstance(errors[0], dict) else {}
+            reason = ": ".join(str(first[k])[:200] for k in ("code", "message") if first.get(k))
             raise VideoRejected(
-                "Gemini Omni could not generate this video. "
+                f"Gemini Omni could not generate this video (Google: {reason})."
+                if reason
+                else "Gemini Omni could not generate this video. "
                 "Its safety filters may have blocked the prompt or the photo."
             )
         if status != "completed":

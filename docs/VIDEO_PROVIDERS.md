@@ -83,8 +83,10 @@ covered and estimated cost first). Offered for Gemini Omni Flash and the offline
   storyteller's recording) is cut into shots of up to 15 s at line boundaries, up to
   `NARRATED_VIDEO_MAX_SECONDS` (60). Each shot's prompt is the English text spoken during it.
 - Shot 1 starts from the story photo; each later shot starts from the frame where the previous
-  one is cut and also gets a reference frame of the people from shot 1, so faces and clothes
-  stay the same. Omni takes several images per request and the prompt says which is which.
+  one is cut, and its prompt asks Omni to keep the same people, faces and clothes. One image
+  per shot: Omni reads a second image as the shot's last frame (with or without
+  `task: image_to_video`) and refuses two images above 10 s, so a separate reference image of
+  the people cannot be sent alongside the opening frame.
 - FFmpeg joins the shots (each cut or held to its planned length), lays the soundtrack over them
   with Omni's sound ducked underneath, stops the voice at the last covered line, holds the last
   frame for 0.6 s and burns in Arabic + English subtitles.

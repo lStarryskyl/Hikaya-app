@@ -46,10 +46,11 @@ def ffmpeg_bytes(*args: str) -> bytes:
 
 
 def clip(seconds: int) -> bytes:
-    """A small MP4 with picture and sound, as a provider would return."""
+    """A small MP4 with picture and sound (a 3 kHz tone, like Omni's own audio), as a provider
+    would return."""
     return ffmpeg_bytes(
         "-f", "lavfi", "-i", f"testsrc=size=320x180:rate=24:duration={seconds}",
-        "-f", "lavfi", "-i", f"sine=frequency=330:duration={seconds}",
+        "-f", "lavfi", "-i", f"sine=frequency=3000:duration={seconds}",
         "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac",
         "-movflags", "frag_keyframe+empty_moov", "-f", "mp4",
     )  # fmt: skip
@@ -464,6 +465,12 @@ async def test_a_narrated_video_is_chained_joined_voiced_and_subtitled(
     assert video["seconds"] == pytest.approx(20.9, abs=0.15)
     assert video["audio"] is True
     assert video["size"] == (1280, 720)
+    # Only the soundtrack is heard. The provider's clips carry a loud 3 kHz tone (Omni always
+    # makes its own sound, voices included); the narration is a 220 Hz tone.
+    assert band_loudness(media.content, 220, 2.0, 16.0) > -40
+    assert band_loudness(media.content, 3000, 2.0, 16.0) < -70
+    assert loudness(media.content, 0.0, 0.25) < -70  # the lead-in is silent
+    assert loudness(media.content, 20.4, 0.45) < -70  # and so is the tail
 
     generation = await session.get(VideoGeneration, uuid.UUID(queued["id"]))
     await session.refresh(generation)
@@ -579,18 +586,24 @@ async def test_fixed_length_providers_are_not_offered_for_narrated_videos(
     assert config["narrated_max_seconds"] == 60
 
 
-def loudness(data: bytes, start: float, seconds: float) -> float:
+def loudness(data: bytes, start: float, seconds: float, band: str = "") -> float:
     """Mean volume in dB of a stretch of a video's sound (-inf for digital silence)."""
     with tempfile.NamedTemporaryFile(suffix=".mp4") as f:
         f.write(data)
         f.flush()
         out = subprocess.run(
             ["ffmpeg", "-hide_banner", "-ss", str(start), "-t", str(seconds), "-i", f.name,
-             "-vn", "-af", "volumedetect", "-f", "null", "-"],
+             "-vn", "-af", f"{band}volumedetect", "-f", "null", "-"],
             capture_output=True, text=True,
         ).stderr  # fmt: skip
     found = re.search(r"mean_volume: (-?[\d.]+|-inf) dB", out)
     return float(found.group(1)) if found else float("-inf")
+
+
+def band_loudness(data: bytes, hertz: int, start: float, seconds: float) -> float:
+    """Mean volume in dB of one narrow band of frequencies around `hertz` (three band-pass
+    filters in a row, so a loud tone elsewhere does not leak in)."""
+    return loudness(data, start, seconds, f"bandpass=f={hertz}:width_type=h:w=100," * 3)
 
 
 async def test_the_voice_stops_at_the_last_line_the_video_covers(

@@ -3,8 +3,8 @@
 The story's soundtrack (its narration, or the storyteller's recording) is the script: its
 timed lines are cut into shots at line boundaries, the first shot is made from the story
 photo and each later one from the frame where the previous shot is cut, and FFmpeg joins the
-shots, lays the soundtrack over them (the provider's own sound kept low and ducked under the
-voice) and burns in subtitles.
+shots' pictures, lays the soundtrack on as the only sound (the provider's own audio, voices
+included, is dropped) and burns in subtitles.
 
 Planning happens in the web request and calls no provider. Everything else runs in worker
 jobs, one step per job (submit a shot, check it once, or join them), so the worker is never
@@ -665,20 +665,11 @@ async def _check(generation_id: uuid.UUID, index: int) -> str:
     return "done"
 
 
-async def _has_audio(path) -> bool:
-    process = await asyncio.create_subprocess_exec(
-        "ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index",
-        "-of", "csv=p=0", str(path),
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-    )  # fmt: skip
-    out, _ = await process.communicate()
-    return bool(out.strip())
-
-
 async def _join(generation_id: uuid.UUID) -> dict:
-    """Join the shots, each cut or held to its planned length, hold the last frame for the
-    tail, lay the soundtrack over them (stopping at the last covered line) with the shots' own
-    sound ducked underneath, and burn in the subtitles."""
+    """Join the shots' pictures, each cut or held to its planned length, hold the last frame
+    for the tail, lay the soundtrack on as the only sound (stopping at the last covered line)
+    and burn in the subtitles. The shots' own audio is never used: Omni always makes some,
+    voices included, and only the story's soundtrack may be heard."""
     async with get_sessionmaker()() as session:
         generation = await session.get(VideoGeneration, generation_id)
         states, data, name = _states(generation), generation.payload, generation.provider
@@ -704,15 +695,8 @@ async def _join(generation_id: uuid.UUID) -> dict:
             f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
             f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p[v{i}]"
         )
-        if await _has_audio(clips[i]):
-            graph.append(
-                f"[{i}:a]aformat=sample_rates=48000:channel_layouts=stereo,apad,"
-                f"atrim=duration={state.span:.3f},asetpts=PTS-STARTPTS[a{i}]"
-            )
-        else:
-            graph.append(f"anullsrc=r=48000:cl=stereo,atrim=duration={state.span:.3f}[a{i}]")
-    joined = "".join(f"[v{i}][a{i}]" for i in range(len(states)))
-    graph.append(f"{joined}concat=n={len(states)}:v=1:a=1[vcat][bed0]")
+    joined = "".join(f"[v{i}]" for i in range(len(states)))
+    graph.append(f"{joined}concat=n={len(states)}:v=1:a=0[vcat]")
     graph.append(f"[vcat]tpad=stop_mode=clone:stop_duration={tail:.3f}[vheld]")
     video = "[vheld]"
     if data.get("subtitles"):
@@ -728,15 +712,11 @@ async def _join(generation_id: uuid.UUID) -> dict:
         graph.append(f"[vheld]subtitles=filename={path}[vout]")
         video = "[vout]"
     voice = len(states)
-    graph += [
+    graph.append(
         f"[{voice}:a]aformat=sample_rates=48000:channel_layouts=stereo,adelay={LEAD_MS}:all=1,"
         f"atrim=duration={voice_end:.3f},afade=t=out:st={voice_end - fade:.3f}:d={fade:.3f},"
-        f"apad,atrim=duration={total:.3f},asplit=2[voice][key]",
-        f"[bed0]apad,atrim=duration={total:.3f},volume=0.6[bed]",
-        "[bed][key]sidechaincompress=threshold=0.02:ratio=12:attack=15:release=400[ducked]",
-        "[ducked][voice]amix=inputs=2:duration=first:normalize=0,"
-        "loudnorm=I=-16:TP=-1.5:LRA=11[aout]",
-    ]
+        f"loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000,apad,atrim=duration={total:.3f}[aout]"
+    )
     target = f"{folder}/result.mp4"
     await render(
         target,

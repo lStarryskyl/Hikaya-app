@@ -87,9 +87,10 @@ covered and estimated cost first). Offered for Gemini Omni Flash and the offline
   per shot: Omni reads a second image as the shot's last frame (with or without
   `task: image_to_video`) and refuses two images above 10 s, so a separate reference image of
   the people cannot be sent alongside the opening frame.
-- FFmpeg joins the shots (each cut or held to its planned length), lays the soundtrack over them
-  with Omni's sound ducked underneath, stops the voice at the last covered line, holds the last
-  frame for 0.6 s and burns in Arabic + English subtitles.
+- FFmpeg joins the shots' pictures (each cut or held to its planned length) and lays the
+  soundtrack on as the only sound: Omni's own audio, voices included, is dropped. The voice
+  stops at the last covered line, the last frame is held for 0.6 s and Arabic + English
+  subtitles are burned in.
 - Each shot is its own ledger entry. The whole estimate (and, on a retry, what is still to pay)
   must fit the caps before anything is queued. `POST /api/v1/staff/videos/<id>/retry` goes on
   from the failed shot; `{"confirm_resubmit": true}` sends an unconfirmed shot again.

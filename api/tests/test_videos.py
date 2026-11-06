@@ -284,3 +284,83 @@ async def test_a_check_is_never_charged_or_cached(client, session, sessionmaker,
     await drain(sessionmaker)
     operations = (await session.execute(select(ProviderCacheEntry.operation))).scalars().all()
     assert "video_status" not in operations
+
+
+async def test_a_gemini_omni_video_runs_through_the_jobs_and_the_ledger(
+    client, session, sessionmaker, monkeypatch
+):
+    """Staff ask for an Omni video; the worker submits once, checks while Google renders,
+    stores the finished MP4 and keeps its reservation on the card budget."""
+    import base64
+    import json
+    from decimal import Decimal
+
+    import httpx
+
+    from app import photos
+    from app.models import SpendEntry
+    from app.storage import get_storage
+    from tests.http_mock import mock_http
+    from tests.test_video_adapters import omni_done
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "enable_ai_video", True)
+    monkeypatch.setattr(settings, "live_ai_enabled", True)
+    monkeypatch.setattr(settings, "gemini_api_key", "ai-studio-test-key")
+    get_storage().write_bytes("test-omni/photo.webp", b"webp-photo")
+
+    async def one_photo(session, story):
+        return ["test-omni/photo.webp"]
+
+    monkeypatch.setattr(photos, "slideshow_images", one_photo)
+    answers = iter(
+        [
+            {"id": "v1_omni", "status": "in_progress"},  # the submission
+            {"id": "v1_omni", "status": "in_progress"},  # first check: still rendering
+            omni_done(b"omni-mp4"),  # second check: ready
+        ]
+    )
+    seen = mock_http(monkeypatch, lambda request: httpx.Response(200, json=next(answers)))
+
+    user = await admin(client, sessionmaker)
+    story = Story(
+        author_id=uuid.UUID(user["id"]),
+        title="Petra at dawn",
+        place_name="Petra",
+        status="published",
+        published_at=datetime.now(UTC),
+    )
+    session.add(story)
+    await session.commit()
+    response = await client.post(
+        "/api/v1/staff/videos",
+        json={
+            "story_id": str(story.id),
+            "provider": "gemini_omni",
+            "model": "gemini-omni-1.2-flash",
+            "prompt": "Slow pan across the stone",
+            "aspect_ratio": "16:9",
+            "seed": 7,
+        },
+    )
+    assert response.status_code == 202, response.text
+    generation_id = response.json()["id"]
+
+    await drain(sessionmaker)
+    done = (await client.get(f"/api/v1/staff/videos/{generation_id}")).json()
+    assert done["status"] == "done", done
+    media = await client.get(done["video_url"])
+    assert media.content == b"omni-mp4"
+    assert media.headers["content-type"] == "video/mp4"
+    assert [request.method for request in seen] == ["POST", "GET", "GET"]
+    sent = json.loads(seen[0].content)
+    assert sent["input"][0]["data"] == base64.b64encode(b"webp-photo").decode()
+    assert "Petra at dawn" in sent["input"][1]["text"]
+
+    session.expire_all()
+    (entry,) = (
+        (await session.execute(select(SpendEntry).where(SpendEntry.provider == "gemini_omni")))
+        .scalars()
+        .all()
+    )
+    assert (entry.state, entry.budget, entry.actual_usd) == ("committed", "card", Decimal("0.48"))

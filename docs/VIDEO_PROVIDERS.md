@@ -16,6 +16,7 @@ Live calls have not been exercised with credentials; contract tests mock the pro
 | fal | FAL_KEY | Wan 2.2 image-to-video, data URI input, durable queue polling |
 | higgsfield | HIGGSFIELD_KEY_ID, HIGGSFIELD_KEY_SECRET | Presigned image upload, Seedance 2.5 image-to-video, idempotent submission and polling |
 | gemini | GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION, GOOGLE_ACCESS_TOKEN | Veo 3.1 GA on Google Cloud, operation polling, inline bytes or authenticated Cloud Storage download |
+| gemini_omni | GEMINI_API_KEY (Google AI Studio, paid tier) | Gemini Omni Flash through the Gemini API, background interaction, inline MP4 on completion |
 | custom | CUSTOM_VIDEO_ENDPOINT, optional CUSTOM_VIDEO_TOKEN | Self-hosted Cog idempotent synchronous prediction in the background worker |
 
 `VIDEO_ESTIMATE_USD` is a conservative per-job reservation for a paid provider, not an
@@ -46,6 +47,31 @@ Veo in the configured project; expired credentials result in a failed job, not a
 
 - Retirement notice: https://ai.google.dev/gemini-api/docs/video
 - GA contract: https://docs.cloud.google.com/vertex-ai/generative-ai/docs/video/generate-videos-from-text
+
+## Gemini Omni Flash
+
+Google's replacement for Veo in the Gemini API, so it works with a Google AI Studio key
+(`GEMINI_API_KEY`). Omni Flash is on the paid tier only: the key's project needs billing, and a
+free-tier key is refused (usually HTTP 429), which the job reports in plain words.
+
+- Submit: `POST https://generativelanguage.googleapis.com/v1beta/interactions` with the key in
+  the `x-goog-api-key` header, model `gemini-omni-1.2-flash`, the story photo (WebP, base64)
+  and the prompt as `input`, `response_format` `{type: video, aspect_ratio, resolution: 720p,
+  duration: 6s}` and `background: true`. Google answers at once with an interaction ID.
+- Check: `GET .../interactions/<id>` once per check. `in_progress` waits for the next check;
+  `completed` carries the MP4 as base64 in the `model_output` step (the GET always returns it
+  inline); `failed` or `cancelled` fails the job.
+- No seed: the console disables it. The aspect ratio (16:9 or 9:16) is sent.
+- Cost: about 0.07 USD per second at 720p (5,792 output tokens per second at 12 USD per million).
+  `GEMINI_OMNI_USD_PER_SECOND` (default 0.08) reserves 0.48 USD per 6-second video on the card
+  budget; it is Omni's own rate, so `VIDEO_USD_PER_SECOND` does not apply.
+- Videos include native audio and an invisible SynthID watermark. Google says languages other
+  than English are not evaluated.
+
+Contracts checked 2026-11-06:
+- https://ai.google.dev/gemini-api/docs/omni
+- https://ai.google.dev/gemini-api/docs/background-execution
+- https://ai.google.dev/gemini-api/docs/pricing
 
 ## Self-hosted Cog
 

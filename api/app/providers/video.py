@@ -147,19 +147,26 @@ def provider(name: str) -> VideoProvider:
         return FakeVideo()
     if name == "fal":
         return FalVideo()
-    from app.providers.video_alternatives import CogVideo, GoogleVeo, HiggsfieldVideo
+    from app.providers.video_alternatives import (
+        CogVideo,
+        GeminiOmniVideo,
+        GoogleVeo,
+        HiggsfieldVideo,
+    )
 
     if name == "higgsfield":
         return HiggsfieldVideo()
     if name == "gemini":
         return GoogleVeo()
+    if name == "gemini_omni":
+        return GeminiOmniVideo()
     if name == "custom":
         return CogVideo()
     raise UserFacingError("This video provider is not connected.")
 
 
 def configurations() -> list[dict]:
-    from app.providers.video_alternatives import HIGGSFIELD_MODEL, VEO_MODELS
+    from app.providers.video_alternatives import HIGGSFIELD_MODEL, OMNI_MODEL, VEO_MODELS
 
     settings = get_settings()
     custom = urlparse(settings.custom_video_endpoint)
@@ -206,6 +213,17 @@ def configurations() -> list[dict]:
             "reason": (
                 "Set GOOGLE_CLOUD_PROJECT, GOOGLE_ACCESS_TOKEN and LIVE_AI_ENABLED. "
                 "Gemini API Veo previews are retired."
+            ),
+        },
+        {
+            "id": "gemini_omni",
+            "label": "Gemini Omni Flash (AI Studio key)",
+            "models": [OMNI_MODEL],
+            "available": bool(settings.gemini_api_key and settings.live_ai_enabled),
+            "supports_seed": False,
+            "reason": (
+                "Set GEMINI_API_KEY (a Google AI Studio key on the paid tier) and "
+                "LIVE_AI_ENABLED. Omni takes no seed."
             ),
         },
         {

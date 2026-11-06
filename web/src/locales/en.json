@@ -506,6 +506,7 @@
   "common.prompt_sent_to_the_provider": "Prompt sent to the provider",
   "common.video_generation_could_not_start": "Video generation could not start.",
   "common.set_fal_key_and_live_ai_enabled_to_use_fal_ai": "Set FAL_KEY and LIVE_AI_ENABLED to use fal.ai.",
+  "common.this_model_does_not_support_seeds": "This model does not support seeds.",
   "common.this_model_follows_the_input_photo_framing_and_does_not_support_seeds": "This model follows the input photo framing and does not support seeds.",
   "common.google_veo_ga": "Google Veo (GA)",
   "common.self_hosted_cog": "Self-hosted Cog",

@@ -506,6 +506,7 @@
   "common.prompt_sent_to_the_provider": "التوجيه المرسل إلى المزوّد",
   "common.video_generation_could_not_start": "تعذّر بدء إنشاء الفيديو.",
   "common.set_fal_key_and_live_ai_enabled_to_use_fal_ai": "اضبط FAL_KEY وLIVE_AI_ENABLED لاستخدام fal.ai.",
+  "common.this_model_does_not_support_seeds": "لا يدعم هذا النموذج البذور العشوائية.",
   "common.this_model_follows_the_input_photo_framing_and_does_not_support_seeds": "يتبع هذا النموذج أبعاد الصورة الأصلية ولا يدعم البذور العشوائية.",
   "common.google_veo_ga": "Google Veo (الإصدار المستقر)",
   "common.self_hosted_cog": "خادم Cog ذاتي الاستضافة",

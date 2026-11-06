@@ -60,6 +60,11 @@ class Settings(BaseSettings):
     google_cloud_project: str = Field("", pattern=r"^$|^[a-z][a-z0-9-]{4,62}[a-z0-9]$")
     google_cloud_location: str = Field("us-central1", pattern=r"^[a-z0-9-]+$")
     google_access_token: str = ""
+    # Gemini Omni Flash through the Gemini API, with a Google AI Studio key (paid tier only).
+    # Its own price per second of 720p video: Google's ~0.07 plus headroom for input and
+    # thinking tokens. VIDEO_USD_PER_SECOND and VIDEO_ESTIMATE_USD do not apply to it.
+    gemini_api_key: str = ""
+    gemini_omni_usd_per_second: float = Field(0.08, ge=0)
     custom_video_endpoint: str = ""
     custom_video_token: str = ""
     custom_video_estimate_usd: float = Field(0.0, ge=0)

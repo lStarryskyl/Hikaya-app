@@ -1,6 +1,8 @@
-"""Higgsfield, supported Google Veo GA, and a self-hosted Cog HTTP server."""
+"""Higgsfield, supported Google Veo GA, Gemini Omni Flash (Gemini API) and a self-hosted Cog
+HTTP server."""
 
 import base64
+import re
 from decimal import Decimal
 from urllib.parse import quote, urlparse
 
@@ -13,6 +15,10 @@ from app.providers.video import download_video, https_host, video_cost
 HIGGSFIELD_MODEL = "bytedance/seedance-2.5/image-to-video"
 VEO_MODEL = "veo-3.1-fast-generate-001"
 VEO_MODELS = [VEO_MODEL, "veo-3.1-generate-001"]
+OMNI_MODEL = "gemini-omni-1.2-flash"
+OMNI_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
+# Interaction IDs look like "v1_..."; anything else is refused before it goes in a URL.
+OMNI_INTERACTION_ID = re.compile(r"^[A-Za-z0-9_-]{1,200}$")
 
 
 def decode_data_url(url: str, media: str) -> bytes:
@@ -206,6 +212,141 @@ class GoogleVeo:
         if url.startswith("data:"):
             return decode_data_url(url, "video/mp4")
         return await download_video(url, ("storage.googleapis.com",), self.headers)
+
+
+class GeminiOmniVideo:
+    """Gemini Omni Flash through the Gemini API's Interactions API, with a Google AI Studio key.
+
+    Submitting creates a background interaction and returns its ID at once; each check reads
+    the interaction once, and a finished one carries the video as base64 MP4 in its
+    `model_output` step. The key goes in the `x-goog-api-key` header, never in a URL.
+    Contract: https://ai.google.dev/gemini-api/docs/omni and
+    https://ai.google.dev/gemini-api/docs/background-execution (checked 2026-11-06).
+    """
+
+    name = "gemini_omni"
+    budget = "card"
+
+    def estimate_usd(self, operation: str, units: int) -> Decimal:
+        """Units are seconds of video; Omni has its own price per second."""
+        return Decimal(str(get_settings().gemini_omni_usd_per_second)) * Decimal(units)
+
+    @property
+    def headers(self) -> dict:
+        key = get_settings().gemini_api_key
+        if not key:
+            raise UserFacingError("The Gemini API key is not configured: set GEMINI_API_KEY.")
+        return {"x-goog-api-key": key}
+
+    async def submit(self, payload: dict) -> dict:
+        headers = self.headers
+        image = decode_data_url(payload["image_url"], "image/webp")
+        body = {
+            "model": payload["model"],
+            "input": [
+                {
+                    "type": "image",
+                    "data": base64.b64encode(image).decode(),
+                    "mime_type": "image/webp",
+                },
+                {"type": "text", "text": payload["prompt"]},
+            ],
+            "response_format": {
+                "type": "video",
+                "aspect_ratio": payload["aspect_ratio"],
+                "resolution": "720p",
+                "duration": "6s",
+            },
+            "background": True,
+        }
+        async with httpx.AsyncClient(timeout=60) as client:
+            response = await client.post(OMNI_URL, headers=headers, json=body)
+        _omni_refusal(response)
+        # A server error may still have started a billed render: left uncertain, not retried.
+        response.raise_for_status()
+        interaction = response.json().get("id")
+        if not isinstance(interaction, str) or not OMNI_INTERACTION_ID.match(interaction):
+            raise UserFacingError("Google returned an unexpected interaction ID.")
+        return {"interaction": interaction}
+
+    async def poll(self, request: dict) -> dict:
+        # The finished interaction carries the whole video inline, so allow time to read it.
+        async with httpx.AsyncClient(timeout=120) as client:
+            response = await client.get(
+                f"{OMNI_URL}/{quote(request['interaction'], safe='')}", headers=self.headers
+            )
+            response.raise_for_status()
+            data = response.json()
+        if not isinstance(data, dict):
+            raise ValueError("unexpected interaction")  # checked again next time
+        status = data.get("status")
+        if status == "in_progress":
+            return {"status": "running"}
+        if status in {"failed", "cancelled"}:
+            raise UserFacingError(
+                "Gemini Omni could not generate this video. "
+                "Its safety filters may have blocked the prompt or the photo."
+            )
+        if status != "completed":
+            raise UserFacingError("Gemini Omni returned an unknown status.")
+        for step in data.get("steps") or []:
+            if not isinstance(step, dict) or step.get("type") != "model_output":
+                continue
+            for part in step.get("content") or []:
+                if (
+                    isinstance(part, dict)
+                    and part.get("type") == "video"
+                    and part.get("mime_type") == "video/mp4"
+                    and isinstance(part.get("data"), str)
+                    and part["data"]
+                ):
+                    return {"status": "done", "video_url": "data:video/mp4;base64," + part["data"]}
+        raise UserFacingError("Gemini Omni finished without a video. It may have been filtered.")
+
+    async def download(self, url: str) -> bytes:
+        # Checks return the video inline (Google: GET on an interaction returns base64 data).
+        return decode_data_url(url, "video/mp4")
+
+
+def _google_error_reasons(response: httpx.Response) -> set[str]:
+    """The `reason` codes in a Google error body, which the Interactions API sends either as
+    {"error": ...} or wrapped in a list."""
+    try:
+        body = response.json()
+    except ValueError:
+        return set()
+    errors = body if isinstance(body, list) else [body]
+    reasons = set()
+    for item in errors:
+        error = item.get("error") if isinstance(item, dict) else None
+        details = error.get("details") if isinstance(error, dict) else None
+        for detail in details if isinstance(details, list) else []:
+            if isinstance(detail, dict) and isinstance(detail.get("reason"), str):
+                reasons.add(detail["reason"])
+    return reasons
+
+
+def _omni_refusal(response: httpx.Response) -> None:
+    """A plain message for answers that mean Google refused the submission outright."""
+    status = response.status_code
+    # Google answers a wrong key with 400 API_KEY_INVALID, not 401.
+    if status in (401, 403) or (
+        status == 400 and "API_KEY_INVALID" in _google_error_reasons(response)
+    ):
+        raise UserFacingError(
+            "Google rejected the Gemini API key; check GEMINI_API_KEY "
+            "(Omni Flash needs a key on a paid-tier project)."
+        )
+    if status == 429:
+        raise UserFacingError(
+            "Google refused the request for quota: Omni Flash needs a Gemini API key on the "
+            "paid tier, or the project's quota is used up."
+        )
+    if status in (400, 404):
+        raise UserFacingError(
+            "Gemini Omni refused this request. The prompt or photo may be blocked, "
+            "or the model is not available to this key."
+        )
 
 
 class CogVideo:

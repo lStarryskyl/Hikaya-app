@@ -62,7 +62,7 @@ Every provider sits behind one interface. A setting picks the provider per step,
 | Polish, translate, label | Azure (a GPT-class model in Azure AI Foundry) | none planned |
 | Narration | ElevenLabs | Azure `ar-JO` neural voices (SanaNeural, TaimNeural) |
 | Voice cloning | ElevenLabs instant voice cloning | none |
-| Image to video | fal.ai (model chosen after a roughly 1 USD bake-off) | Higgsfield API, Gemini API Veo, any open-source model endpoint |
+| Image to video | fal.ai (model chosen after a roughly 1 USD bake-off) | Higgsfield API, Google Cloud Veo, Gemini Omni Flash (Gemini API key), any open-source model endpoint |
 
 OmniVoice (open-source text to speech) is not planned for the build. Its weights are non-commercial and it has no Jordanian dialect data. It may be added as an off-by-default test provider after a listening test. See `docs/research/omnivoice.md`.
 
@@ -170,7 +170,7 @@ These exist on purpose while the build is in progress. Each closes with the tick
 - A provider's own cost for a call stands even when the answer is then refused as unusable (Azure bills the tokens it used); the ledger counts it rather than releasing the reservation.
 - A narration queued in a cloned voice checks the voice before speaking, so nothing is paid for in a revoked voice; speech made while the voice was being revoked is deleted with it. A cloned narrator is only used while the narration provider can read with it.
 - When ElevenLabs asks the speaker to verify a cloned voice, staff confirm on the staff page once the speaker has done it there; the confirmation is audited.
-- Video checks stop `VIDEO_MAX_WAIT_SECONDS` after the video was queued, however often a job is retried; a video that is ready but fails to download is fetched again on the next check. Video cost can be set per second (`VIDEO_USD_PER_SECOND`) or as a flat price per video. `.env.example` sets 0.04 USD per second, fal.ai's price for Wan 2.2 at 480p (checked 2026-11-06), so each 6-second video counts as 0.24 USD instead of the 1 USD flat estimate. The rate is per setting, not per provider: raise it before giving another video provider keys.
+- Video checks stop `VIDEO_MAX_WAIT_SECONDS` after the video was queued, however often a job is retried; a video that is ready but fails to download is fetched again on the next check. Video cost can be set per second (`VIDEO_USD_PER_SECOND`) or as a flat price per video. `.env.example` sets 0.04 USD per second, fal.ai's price for Wan 2.2 at 480p (checked 2026-11-06), so each 6-second video counts as 0.24 USD instead of the 1 USD flat estimate. The rate is one setting for every video provider except Gemini Omni Flash, which has its own (`GEMINI_OMNI_USD_PER_SECOND`): raise it before giving Veo or Higgsfield keys.
 
 ## Narration and slideshow
 
@@ -249,6 +249,14 @@ AI persona chat, reels, the 360 viewer, analytics dashboards, the visit planner 
 - Updated provider research: the Gemini API Veo previews retired on 2026-10-22. The Google selection uses the supported GA Google Cloud Veo endpoint, requiring project/access-token settings. This explicitly replaces the older Gemini-API-key assumption in the initial research.
 - Cog's asynchronous prediction API has no GET polling contract. Its adapter makes an idempotent synchronous prediction call inside the worker instead; the app still tracks the local asynchronous job.
 - Deployment settings, model contracts, provider limitations and source links are in `docs/VIDEO_PROVIDERS.md`.
+
+## Gemini Omni Flash video with a Google AI Studio key
+
+- Google shut down Veo in the Gemini API on 2026-10-22 and points to Gemini Omni Flash (`gemini-omni-1.2-flash`) as its replacement there, so a Google AI Studio key (`GEMINI_API_KEY`) can make staff videos again: `VIDEO_PROVIDER=gemini_omni`. The existing `gemini` choice stays Veo on Google Cloud, with a project and an access token. (Decided 2026-11-06 with the owner, who holds an AI Studio key.)
+- It uses the Interactions API in the background: submitting returns an interaction ID at once, and each check reads that interaction once, as for the other providers, so the worker is never held while Google renders. A finished interaction carries the video as base64 MP4 in its `model_output` step; a failed or cancelled one fails the job with a plain message. The key travels in the `x-goog-api-key` header, never in a URL.
+- The request is the story photo (WebP) and the prompt, 16:9 or 9:16, 720p, 6 seconds. Omni takes no seed, so the console disables it and the seed is left out of the cache identity; the aspect ratio works. Videos come with Google's native audio and an invisible SynthID watermark. Google says languages other than English are not evaluated.
+- Omni Flash is on the Gemini API's paid tier only (the free tier is "Not available"); a free-tier key is refused, and the message says so. A wrong key is named as such: Google answers it with 400 `API_KEY_INVALID`, not 401, so a 400 is not taken for a blocked prompt unless it says so. Google bills output tokens, 5,792 per second at 720p at 12 USD per million, about 0.07 USD a second. `GEMINI_OMNI_USD_PER_SECOND` (default 0.08, headroom for input and thinking tokens) is Omni's own rate, so a video reserves 0.48 USD on the card budget; `VIDEO_USD_PER_SECOND` and `VIDEO_ESTIMATE_USD` do not apply to it.
+- Not exercised with a real key yet; contract tests mock Google's HTTP answers. Sources, checked 2026-11-06: https://ai.google.dev/gemini-api/docs/omni , https://ai.google.dev/gemini-api/docs/background-execution , https://ai.google.dev/gemini-api/docs/pricing , https://ai.google.dev/gemini-api/docs/video
 
 ## Browser verification (#22)
 

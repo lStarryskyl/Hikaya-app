@@ -71,7 +71,9 @@ export default function VideoConsole() {
       )}
       {selected?.supports_seed === false && (
         <p className="mb-3 text-sm text-muted2">
-          {t('This model follows the input photo framing and does not support seeds.')}
+          {selected?.supports_aspect === false
+            ? t('This model follows the input photo framing and does not support seeds.')
+            : t('This model does not support seeds.')}
         </p>
       )}
       <form onSubmit={(event) => void submit(event)} className="grid gap-4 sm:grid-cols-2">

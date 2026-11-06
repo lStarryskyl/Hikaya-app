@@ -71,6 +71,16 @@ def _elevenlabs_voice_unknown(response: httpx.Response) -> bool:
     return isinstance(detail, dict) and detail.get("status") in ELEVENLABS_VOICE_ERRORS
 
 
+def _elevenlabs_message(response: httpx.Response) -> str:
+    """ElevenLabs' own explanation of a refusal ({"detail": {"message": ...}}), or ""."""
+    try:
+        detail = response.json().get("detail")
+    except (ValueError, AttributeError):
+        return ""
+    message = detail.get("message") if isinstance(detail, dict) else None
+    return str(message).strip()[:300] if message else ""
+
+
 async def _duration_ms(mp3: bytes) -> int:
     """How long an MP3 plays, measured with ffprobe."""
     with tempfile.NamedTemporaryFile(suffix=".mp3") as f:
@@ -176,6 +186,9 @@ class ElevenLabsTextToSpeech:
             raise ProviderUnavailable(f"The {self.service} could not be reached.") from exc
         if _elevenlabs_voice_unknown(response):
             raise self._unknown_voice(voice)
+        if response.status_code in (400, 422) and (reason := _elevenlabs_message(response)):
+            # ElevenLabs' own explanation (e.g. a voice that needs a higher plan).
+            raise UserFacingError(f"The {self.service} refused this request: {reason}")
         _raise_for_status(response, self.service, "ELEVENLABS_API_KEY")
         try:
             body = response.json()

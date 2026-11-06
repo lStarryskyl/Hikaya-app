@@ -302,3 +302,18 @@ async def test_a_story_is_narrated_by_elevenlabs_with_its_timings(
     assert len(seen) == 1  # the whole text in one call
     assert narration["segments"][0]["start_ms"] == 0
     assert story["slideshow"] is not None  # the slideshow carries the real narration
+
+
+async def test_elevenlabs_says_why_it_refused(elevenlabs, monkeypatch):
+    # Seen live on 2026-11-06 with a Voice Library voice on a lower plan.
+    plan_needed = {
+        "detail": {
+            "type": "invalid_request",
+            "message": "You need to be on the creator tier or above to use this voice.",
+            "status": "free_users_not_allowed",
+        }
+    }
+    mock_http(monkeypatch, lambda request: httpx.Response(400, json=plan_needed))
+    with pytest.raises(UserFacingError, match="creator tier") as caught:
+        await text_to_speech().speak(["line"], "english", "voice-en")
+    assert "refused this text" not in str(caught.value)

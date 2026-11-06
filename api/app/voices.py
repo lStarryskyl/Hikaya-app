@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import audio, gateway, jobs, media
+from app import audio, gateway, jobs, media, narrated_video
 from app.auth import require_roles
 from app.config import get_settings
 from app.db import get_session, get_sessionmaker
@@ -327,9 +327,10 @@ async def mark_verified(
 async def revoke(
     voice_id: uuid.UUID, user: User = Depends(staff), session: AsyncSession = Depends(get_session)
 ) -> dict:
-    """Withdraw a voice: its sample, every narration made with it (and the slideshows that
-    carry them) and the cached speech in it are deleted at once; affected stories are
-    narrated again in the default voice; the provider's copy is deleted by a job."""
+    """Withdraw a voice: its sample, every narration made with it (and the slideshows and
+    narrated AI videos that carry them) and the cached speech in it are deleted at once;
+    affected stories are narrated again in the default voice; the provider's copy is deleted
+    by a job."""
     voice = await session.get(VoiceClone, voice_id, with_for_update=True)
     if voice is None:
         raise HTTPException(404, "Voice not found.")
@@ -363,6 +364,7 @@ async def revoke(
         for asset in old:
             files.append(asset.storage_key)
             await session.delete(asset)
+    video_folders = await narrated_video.remove_for_voice(session, voice.id)
     if voice.provider_voice_id:
         files += await media.purge_speech(session, voice.provider_voice_id)
         await jobs.enqueue(
@@ -394,6 +396,8 @@ async def revoke(
     await session.commit()
     storage = get_storage()
     await asyncio.to_thread(storage.delete, *files)
+    for folder in video_folders:
+        await asyncio.to_thread(storage.delete_tree, folder)
     await asyncio.to_thread(storage.delete_tree, f"voices/{voice.id}")
     return await output(session, voice)
 

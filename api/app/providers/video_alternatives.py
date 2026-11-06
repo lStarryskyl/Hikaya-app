@@ -9,8 +9,8 @@ from urllib.parse import quote, urlparse
 import httpx
 
 from app.config import get_settings
-from app.errors import UserFacingError
-from app.providers.video import download_video, https_host, video_cost
+from app.errors import NotStarted, UserFacingError
+from app.providers.video import VideoRejected, download_video, https_host, video_cost
 
 HIGGSFIELD_MODEL = "bytedance/seedance-2.5/image-to-video"
 VEO_MODEL = "veo-3.1-fast-generate-001"
@@ -106,7 +106,7 @@ class HiggsfieldVideo:
                 ),
             }
         if data.get("status") in {"failed", "nsfw", "canceled"}:
-            raise UserFacingError(
+            raise VideoRejected(
                 "Higgsfield could not complete this video. Check the prompt and input photo."
             )
         if data.get("status") not in {"queued", "in_progress"}:
@@ -188,9 +188,7 @@ class GoogleVeo:
         if not data.get("done"):
             return {"status": "running"}
         if data.get("error") or not data.get("response", {}).get("videos"):
-            raise UserFacingError(
-                "Google could not generate this video. It may have been filtered."
-            )
+            raise VideoRejected("Google could not generate this video. It may have been filtered.")
         video = data["response"]["videos"][0]
         if video.get("bytesBase64Encoded"):
             return {
@@ -226,6 +224,8 @@ class GeminiOmniVideo:
 
     name = "gemini_omni"
     budget = "card"
+    # Shot lengths Omni makes, in seconds (a single clip is 6).
+    shot_seconds = (3, 15)
 
     def estimate_usd(self, operation: str, units: int) -> Decimal:
         """Units are seconds of video; Omni has its own price per second."""
@@ -235,24 +235,32 @@ class GeminiOmniVideo:
     def headers(self) -> dict:
         key = get_settings().gemini_api_key
         if not key:
-            raise UserFacingError("The Gemini API key is not configured: set GEMINI_API_KEY.")
+            raise NotStarted("The Gemini API key is not configured: set GEMINI_API_KEY.")
         return {"x-goog-api-key": key}
 
     async def submit(self, payload: dict) -> dict:
         headers = self.headers
         # A single clip is 6 s; a narrated video's shots ask for their own length.
         seconds = payload.get("seconds", 6)
-        if type(seconds) is not int or not 3 <= seconds <= 15:
-            raise UserFacingError("Gemini Omni makes shots of 3 to 15 seconds.")
-        image = decode_data_url(payload["image_url"], "image/webp")
+        shortest, longest = self.shot_seconds
+        if type(seconds) is not int or not shortest <= seconds <= longest:
+            raise NotStarted(f"Gemini Omni makes shots of {shortest} to {longest} seconds.")
+        # The opening frame, then (for a later shot of a narrated video) a reference frame of
+        # the people; Omni has no field for image roles, so the prompt says which is which.
+        images = [payload["image_url"]] + (
+            [payload["reference_url"]] if payload.get("reference_url") else []
+        )
         body = {
             "model": payload["model"],
             "input": [
-                {
-                    "type": "image",
-                    "data": base64.b64encode(image).decode(),
-                    "mime_type": "image/webp",
-                },
+                *(
+                    {
+                        "type": "image",
+                        "data": base64.b64encode(decode_data_url(url, "image/webp")).decode(),
+                        "mime_type": "image/webp",
+                    }
+                    for url in images
+                ),
                 {"type": "text", "text": payload["prompt"]},
             ],
             "response_format": {
@@ -287,7 +295,7 @@ class GeminiOmniVideo:
         if status == "in_progress":
             return {"status": "running"}
         if status in {"failed", "cancelled"}:
-            raise UserFacingError(
+            raise VideoRejected(
                 "Gemini Omni could not generate this video. "
                 "Its safety filters may have blocked the prompt or the photo."
             )
@@ -305,7 +313,7 @@ class GeminiOmniVideo:
                     and part["data"]
                 ):
                     return {"status": "done", "video_url": "data:video/mp4;base64," + part["data"]}
-        raise UserFacingError("Gemini Omni finished without a video. It may have been filtered.")
+        raise VideoRejected("Gemini Omni finished without a video. It may have been filtered.")
 
     async def download(self, url: str) -> bytes:
         # Checks return the video inline (Google: GET on an interaction returns base64 data).
@@ -331,23 +339,24 @@ def _google_error_reasons(response: httpx.Response) -> set[str]:
 
 
 def _omni_refusal(response: httpx.Response) -> None:
-    """A plain message for answers that mean Google refused the submission outright."""
+    """A plain message for answers that mean Google refused the submission outright: nothing
+    was started, so nothing was billed."""
     status = response.status_code
     # Google answers a wrong key with 400 API_KEY_INVALID, not 401.
     if status in (401, 403) or (
         status == 400 and "API_KEY_INVALID" in _google_error_reasons(response)
     ):
-        raise UserFacingError(
+        raise NotStarted(
             "Google rejected the Gemini API key; check GEMINI_API_KEY "
             "(Omni Flash needs a key on a paid-tier project)."
         )
     if status == 429:
-        raise UserFacingError(
+        raise NotStarted(
             "Google refused the request for quota: Omni Flash needs a Gemini API key on the "
             "paid tier, or the project's quota is used up."
         )
     if status in (400, 404):
-        raise UserFacingError(
+        raise NotStarted(
             "Gemini Omni refused this request. The prompt or photo may be blocked, "
             "or the model is not available to this key."
         )

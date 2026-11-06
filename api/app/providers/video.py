@@ -13,6 +13,16 @@ from app.errors import UserFacingError
 FAL_MODEL = "fal-ai/wan/v2.2-a14b/image-to-video"
 
 
+class VideoRejected(UserFacingError):
+    """The provider reports that it failed, cancelled or filtered the job: it is over, and
+    trying again means a new (paid) submission."""
+
+
+def clip_extension(name: str) -> str:
+    """The file type of a provider's videos: the offline demo replays a WebM sample."""
+    return ".webm" if name == "fake" else ".mp4"
+
+
 class VideoProvider(Protocol):
     name: str
     budget: str | None
@@ -58,6 +68,8 @@ def video_cost(seconds: int) -> Decimal:
 class FakeVideo:
     name = "fake"
     budget = None
+    # Narrated videos: rehearses Gemini Omni's shot lengths; the demo clip is held to any.
+    shot_seconds = (3, 15)
 
     def estimate_usd(self, operation: str, units: int) -> Decimal:
         return Decimal(0)
@@ -121,7 +133,7 @@ class FalVideo:
                     raise UserFacingError("The video provider returned an unknown job status.")
                 return {"status": "queued" if data["status"] == "IN_QUEUE" else "running"}
             if data.get("error"):
-                raise UserFacingError("The video provider could not generate this prompt.")
+                raise VideoRejected("The video provider could not generate this prompt.")
             result = await client.get(
                 https_host(request["response_url"], ("queue.fal.run",)), headers=self.headers
             )
@@ -166,7 +178,12 @@ def provider(name: str) -> VideoProvider:
 
 
 def configurations() -> list[dict]:
-    from app.providers.video_alternatives import HIGGSFIELD_MODEL, OMNI_MODEL, VEO_MODELS
+    from app.providers.video_alternatives import (
+        HIGGSFIELD_MODEL,
+        OMNI_MODEL,
+        VEO_MODELS,
+        GeminiOmniVideo,
+    )
 
     settings = get_settings()
     custom = urlparse(settings.custom_video_endpoint)
@@ -177,8 +194,7 @@ def configurations() -> list[dict]:
             "models": ["demo"],
             "available": True,
             "reason": "",
-            # Narrated videos: the longest shot. The demo clip is held to any length.
-            "max_shot_seconds": 15,
+            "max_shot_seconds": FakeVideo.shot_seconds[1],
         },
         {
             "id": "fal",
@@ -223,7 +239,7 @@ def configurations() -> list[dict]:
             "models": [OMNI_MODEL],
             "available": bool(settings.gemini_api_key and settings.live_ai_enabled),
             "supports_seed": False,
-            "max_shot_seconds": 15,
+            "max_shot_seconds": GeminiOmniVideo.shot_seconds[1],
             "reason": (
                 "Set GEMINI_API_KEY (a Google AI Studio key on the paid tier) and "
                 "LIVE_AI_ENABLED. Omni takes no seed."

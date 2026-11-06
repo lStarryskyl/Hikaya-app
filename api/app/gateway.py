@@ -22,7 +22,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.config import get_settings
 from app.db import get_sessionmaker
-from app.errors import UserFacingError
+from app.errors import NotStarted, UserFacingError
 from app.models import ProviderCacheEntry, SpendEntry
 from app.storage import get_storage
 
@@ -183,11 +183,12 @@ async def call(
     token = REPORTED_COST.set(reported)
     try:
         result = await run()
-    except BaseException:
+    except BaseException as exc:
         # Billed even though the answer was unusable (Azure reports the tokens it used), or an
         # uncertain asynchronous submission that may already be billed: keep it counted rather
-        # than releasing budget that could already have been spent.
-        if reported or charge_on_failure:
+        # than releasing budget that could already have been spent. A request the provider
+        # refused outright (or that was never sent) started nothing and is released.
+        if (reported or charge_on_failure) and not isinstance(exc, NotStarted):
             cost = sum(reported, Decimal("0")) if reported else estimate
             await _settle(entry_id, "committed", cost)
             costs = JOB_COST.get()

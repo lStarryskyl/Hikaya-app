@@ -143,7 +143,7 @@ async def _queue_slideshow(session: AsyncSession, story: Story) -> None:
 # --- shared ---
 
 
-def _inputs(fmt: str, paths: list[Path]) -> list[str]:
+def ffmpeg_inputs(fmt: str, paths: list[Path]) -> list[str]:
     """FFmpeg input arguments: each input names its format and may only read local files."""
     return [
         arg for path in paths for arg in ("-protocol_whitelist", "file", "-f", fmt, "-i", str(path))
@@ -166,7 +166,7 @@ async def _ffmpeg(*args: str, timeout: int = RENDER_TIMEOUT_SECONDS) -> None:
         raise RuntimeError(f"FFmpeg failed: {err.decode(errors='replace')[-500:]}")
 
 
-async def _render(key: str, *args: str) -> None:
+async def render(key: str, *args: str) -> None:
     """Run FFmpeg into a partial file and move it to `key` only when it succeeded, so a
     half-written file is never served or left behind."""
     storage = get_storage()
@@ -281,8 +281,8 @@ async def narrate(payload: dict) -> dict:
             lines.append((at, at + length))
             at += length
         labels = "".join(f"[{i}:a]" for i in range(len(pieces)))
-        await _render(
-            key, *_inputs("mp3", pieces),
+        await render(
+            key, *ffmpeg_inputs("mp3", pieces),
             "-filter_complex", f"{labels}concat=n={len(pieces)}:v=0:a=1[a]", "-map", "[a]",
             "-ac", "1", "-ar", "44100", "-c:a", "libmp3lame", "-b:a", "96k", "-f", "mp3",
         )  # fmt: skip
@@ -377,8 +377,8 @@ async def slideshow(payload: dict) -> dict:
     sound = storage.path(sound_key)
     seconds = (narration_ms or await audio.duration_ms(sound)) / 1000
     key = _new_key(story_id, "slideshow", ".mp4")
-    await _render(
-        key, *_inputs("webp_pipe", images), *_inputs("mp3", [sound]),
+    await render(
+        key, *ffmpeg_inputs("webp_pipe", images), *ffmpeg_inputs("mp3", [sound]),
         "-filter_complex", slideshow_filters(len(images), seconds),
         "-map", "[v]", "-map", f"{len(images)}:a",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-r", str(FPS),

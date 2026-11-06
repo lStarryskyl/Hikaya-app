@@ -385,3 +385,19 @@ async def test_gemini_omni_refuses_a_length_it_cannot_make(omni, monkeypatch, se
     with pytest.raises(UserFacingError, match="3 to 15"):
         await provider("gemini_omni").submit({**OMNI_PAYLOAD, "seconds": seconds})
     assert seen == []
+
+
+async def test_gemini_omni_sends_a_reference_image_after_the_opening_frame(omni, monkeypatch):
+    accepted = {"id": "v1_abc", "status": "in_progress"}
+    seen = mock_http(monkeypatch, lambda request: httpx.Response(200, json=accepted))
+    reference = b"RIFF\x00\x00\x00\x00WEBPreference"
+    await provider("gemini_omni").submit(
+        {
+            **OMNI_PAYLOAD,
+            "reference_url": "data:image/webp;base64," + base64.b64encode(reference).decode(),
+        }
+    )
+    body = json.loads(seen[0].content)
+    assert [part["type"] for part in body["input"]] == ["image", "image", "text"]
+    assert base64.b64decode(body["input"][0]["data"]) == WEBP
+    assert base64.b64decode(body["input"][1]["data"]) == reference

@@ -2,9 +2,9 @@
 
 The story's soundtrack (its narration, or the storyteller's recording) is the script: its
 timed lines are cut into shots at line boundaries, the first shot is made from the story
-photo and each later one from the frame where the previous shot is cut, and FFmpeg joins the
-shots, lays the soundtrack over them (the provider's own sound kept low and ducked under the
-voice) and burns in subtitles.
+photo and each later one from the frame where the previous shot is cut (with a reference frame
+of the people from the first shot), and FFmpeg joins the shots, lays the soundtrack over them
+(the provider's own sound kept low and ducked under the voice) and burns in subtitles.
 
 Planning happens in the web request and calls no provider. Everything else runs in worker
 jobs, one step per job (submit a shot, check it once, or join them), so the worker is never
@@ -16,31 +16,45 @@ import base64
 import math
 import re
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import httpx
+from sqlalchemy import select
 
 from app import gateway, jobs
 from app.assets import asset_of
 from app.config import get_settings
 from app.db import get_sessionmaker
-from app.errors import UserFacingError
+from app.errors import NotStarted, UserFacingError
 from app.handlers import handler
-from app.media import _inputs, _render, narration_for
-from app.models import AssetKind, Job, JobStatus, Story, TextLayer, VideoGeneration
-from app.providers.video import FreeVideoRead, provider
+from app.media import ffmpeg_inputs, narration_for, render
+from app.models import AssetKind, Job, JobStatus, Story, VideoGeneration
+from app.pipeline import get_layer
+from app.providers.video import FreeVideoRead, VideoRejected, clip_extension, provider
 from app.storage import get_storage
 
 KIND = "narrated_video"
 LEAD_MS = 300  # picture before the first word
-TAIL_MS = 600  # the last frame held after the last word
-MIN_SHOT_SECONDS = 3
-RLM = "‏"
+TAIL_MS = 600  # the last frame held after the last word (not asked of the provider)
+VOICE_FADE_MS = 120  # the voice fades out at the end of the last line the video covers
+REFERENCE_AT = 0.4  # where in the first shot the reference frame of the people is taken
+RLE, PDF = "‫", "‬"  # right-to-left embedding around Arabic subtitle lines
 SIZES = {"16:9": (1280, 720), "9:16": (720, 1280)}
+DEMUXERS = {".webm": "matroska", ".mp4": "mov"}
 # Storage paths go into an FFmpeg filter argument unquoted, so only plain characters pass.
 SAFE_PATH = re.compile(r"^[A-Za-z0-9._/-]+$")
+
+# Progress is one of these fixed messages (the console translates them); the shot number is
+# reported beside it.
+SUBMITTING = "Submitting a shot"
+RENDERING = "Rendering a shot"
+SHOT_READY = "Shot ready"
+JOINING = "Joining the shots"
+RETRYING = "Retrying"
+REMOVED = "Removed: the narrator's voice was revoked"
+READY = "Video ready"
 
 
 @dataclass(frozen=True)
@@ -62,12 +76,13 @@ class Shot:
 # --- planning (pure) ---
 
 
-def plan(
-    lines: list[Line], max_shot_seconds: int, max_total_seconds: int
+def plan_shots(
+    lines: list[Line], max_shot_seconds: int, max_total_seconds: int, min_shot_seconds: int = 3
 ) -> tuple[list[Line], list[Shot]]:
-    """The whole lines that fit in `max_total_seconds`, and shots covering them, cut where a
-    line starts and never longer than `max_shot_seconds`. A line longer than a shot is split
-    evenly. The first shot starts at 0 (the lead-in); the last ends after the tail."""
+    """The whole lines that fit in `max_total_seconds` (lead-in and tail included), and shots
+    covering them, cut where a line starts and never longer than `max_shot_seconds`. A line
+    longer than a shot is split evenly. The first shot starts at 0 (the lead-in); the last
+    ends with the last word, since the tail is the held last frame."""
     if not lines:
         raise UserFacingError("The soundtrack has no timed lines to follow.")
     cap = max_total_seconds * 1000
@@ -81,9 +96,8 @@ def plan(
             f"The soundtrack's first line is longer than a narrated video can be "
             f"({max_total_seconds} s)."
         )
-    total = kept[-1].end_ms + LEAD_MS + TAIL_MS
     longest = max_shot_seconds * 1000
-    cuts = [line.start_ms + LEAD_MS for line in kept[1:]] + [total]
+    cuts = [line.start_ms + LEAD_MS for line in kept[1:]] + [kept[-1].end_ms + LEAD_MS]
     spans: list[tuple[int, int]] = []
     start, reach, i = 0, None, 0
     while i < len(cuts):
@@ -104,7 +118,7 @@ def plan(
         Shot(
             a,
             b,
-            max(MIN_SHOT_SECONDS, math.ceil((b - a) / 1000)),
+            max(min_shot_seconds, math.ceil((b - a) / 1000)),
             tuple(
                 n
                 for n, line in enumerate(kept)
@@ -117,13 +131,14 @@ def plan(
 
 
 def shot_prompt(index: int, count: int, title: str, place: str, words: str, direction: str) -> str:
-    """One shot's prompt: what is said during it, and how it continues the film."""
+    """One shot's prompt: what is said during it, and how it continues the film. A later shot
+    gets two images, and Omni has no field for image roles, so the prompt names them."""
     continuity = (
         "Start from the provided photo."
         if index == 0
-        else "This shot continues straight on from the previous shot: the image given is its "
-        "last frame. Keep the same place, light, colours, camera style and any people "
-        "exactly as they are."
+        else "Two images are given. The first image is the last frame of the previous shot: "
+        "start exactly from it, so the cut is seamless. The second image shows how the people "
+        "in this film look: keep their faces, hair and clothes exactly the same."
     )
     return "\n".join(
         [
@@ -183,8 +198,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if not spoken:
             continue
         if rtl:
-            # Keeps a closing full stop at the end of the right-to-left line.
-            spoken = RLM + spoken + RLM
+            # The subtitle renderer lays lines out left to right; the embedding keeps Arabic
+            # word order and its closing full stop right, even with Latin words inside.
+            spoken = RLE + spoken + PDF
         english = _clean(line.english or "")
         text = (
             f"{{\\fs{small}\\c&HE6F2FF&}}{spoken}\\N{{\\fs{base}\\c&HFFFFFF&}}{english}"
@@ -196,21 +212,23 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     return header + "\n".join(events) + "\n"
 
 
-# --- the plan for a story (web request: database only, no provider call) ---
+# --- a story's plan (web request: database only, no provider call) ---
 
 
 @dataclass
-class Planned:
+class StoryPlan:
     soundtrack_key: str
     lines: list[Line]  # the lines the video covers
     lines_total: int
     shots: list[Shot]
     rtl: bool
+    english: bool  # every line has an English translation (prompts and second subtitle line)
+    voice_clone_id: uuid.UUID | None  # the cloned voice that read the narration, if any
     estimate: Decimal
 
     @property
     def seconds(self) -> float:
-        return self.shots[-1].end_ms / 1000
+        return (self.shots[-1].end_ms + TAIL_MS) / 1000
 
     def summary(self) -> dict:
         return {
@@ -227,21 +245,16 @@ class Planned:
             "estimate_usd": str(self.estimate.quantize(Decimal("0.01"))),
             "lines": len(self.lines),
             "lines_total": self.lines_total,
+            "english": self.english,
         }
 
 
-async def _layer(session, story_id: uuid.UUID, kind: str) -> TextLayer | None:
-    from sqlalchemy import select
-
-    return (
-        await session.execute(
-            select(TextLayer).where(TextLayer.story_id == story_id, TextLayer.kind == kind)
-        )
-    ).scalar_one_or_none()
-
-
-async def _soundtrack(session, story: Story, kind: str) -> tuple[str, list[Line], bool]:
-    """The soundtrack's file, its timed lines and whether they are right-to-left."""
+async def _soundtrack(
+    session, story: Story, kind: str
+) -> tuple[str, list[Line], bool, bool, uuid.UUID | None]:
+    """The soundtrack's file, its timed lines, whether they are right-to-left, whether every
+    line has an English translation, and the cloned voice that read it (if any)."""
+    clone_id = None
     if kind == "narration":
         found = await narration_for(session, story.id)
         if found is None:
@@ -250,9 +263,11 @@ async def _soundtrack(session, story: Story, kind: str) -> tuple[str, list[Line]
             )
         row, asset = found
         segments, language, key = row.segments, row.language, asset.storage_key
+        clone_id = row.voice_clone_id
     else:
         asset = await asset_of(session, story.id, AssetKind.AUDIO)
-        layer = await _layer(session, story.id, "polished") or await _layer(
+        # The polished text of each spoken line, at the transcript's timings.
+        layer = await get_layer(session, story.id, "polished") or await get_layer(
             session, story.id, "verbatim"
         )
         if asset is None or layer is None or not layer.segments:
@@ -260,7 +275,7 @@ async def _soundtrack(session, story: Story, kind: str) -> tuple[str, list[Line]
         segments, language, key = layer.segments, layer.language, asset.storage_key
     english = None
     if language != "english":
-        layer = await _layer(session, story.id, "translation_en")
+        layer = await get_layer(session, story.id, "translation_en")
         if layer is not None and len(layer.segments) == len(segments):
             english = [str(s.get("text", "")) for s in layer.segments]
     lines = [
@@ -272,46 +287,81 @@ async def _soundtrack(session, story: Story, kind: str) -> tuple[str, list[Line]
         )
         for i, s in enumerate(segments)
     ]
-    return key, lines, language != "english"
+    rtl = language != "english"
+    return key, lines, rtl, english is not None or not rtl, clone_id
 
 
-async def plan_for(
-    session, story: Story, provider_name: str, max_shot_seconds: int, soundtrack: str
-) -> Planned:
-    key, lines, rtl = await _soundtrack(session, story, soundtrack)
-    kept, shots = plan(lines, max_shot_seconds, get_settings().narrated_video_max_seconds)
+async def plan_story(session, story: Story, provider_name: str, soundtrack: str) -> StoryPlan:
     adapter = provider(provider_name)
+    shortest, longest = adapter.shot_seconds
+    key, lines, rtl, english, clone_id = await _soundtrack(session, story, soundtrack)
+    kept, shots = plan_shots(
+        lines, longest, get_settings().narrated_video_max_seconds, min_shot_seconds=shortest
+    )
     estimate = sum(
         (adapter.estimate_usd("video_submit", shot.seconds) for shot in shots), Decimal(0)
     )
-    return Planned(key, kept, len(lines), shots, rtl, estimate)
+    return StoryPlan(key, kept, len(lines), shots, rtl, english, clone_id, estimate)
 
 
-def shot_states(planned: Planned, title: str, place: str, direction: str) -> list[dict]:
-    """The stored state of each shot of a new narrated video."""
-    count = len(planned.shots)
+# --- the stored state of each shot ---
+
+
+@dataclass
+class ShotState:
+    start_ms: int
+    end_ms: int
+    seconds: int
+    lines: list[int]
+    prompt: str
+    attempt: int = 1
+    submitted: bool = False
+    request: dict | None = None
+    failed: bool = False  # the provider reported the job failed, cancelled or filtered
+    file_key: str | None = None
+    frame_key: str | None = None  # where the next shot starts
+    reference_key: str | None = None  # first shot only: how the people look
+
+    @property
+    def uncertain(self) -> bool:
+        """Submitted, but the provider's answer never arrived: it may be rendering (and billed)."""
+        return self.submitted and not self.request
+
+    @property
+    def span(self) -> float:
+        return (self.end_ms - self.start_ms) / 1000
+
+    def cache_parts(self, input_hash: str, index: int) -> tuple[str, ...]:
+        return (input_hash, f"shot-{index}", f"try-{self.attempt}")
+
+
+def _states(generation: VideoGeneration) -> list[ShotState]:
+    return [ShotState(**shot) for shot in generation.shots]
+
+
+def _store(generation: VideoGeneration, states: list[ShotState]) -> None:
+    generation.shots = [asdict(state) for state in states]
+
+
+def new_shots(plan: StoryPlan, title: str, place: str, direction: str) -> list[dict]:
+    """The stored shots of a new narrated video."""
+    count = len(plan.shots)
     return [
-        {
-            "start_ms": shot.start_ms,
-            "end_ms": shot.end_ms,
-            "seconds": shot.seconds,
-            "lines": list(shot.lines),
-            "prompt": shot_prompt(
-                index, count, title, place, _shot_words(planned.lines, shot), direction
-            ),
-            "attempt": 1,
-            "submitted": False,
-            "request": None,
-            "failed": False,
-            "file_key": None,
-            "frame_key": None,
-        }
-        for index, shot in enumerate(planned.shots)
+        asdict(
+            ShotState(
+                shot.start_ms,
+                shot.end_ms,
+                shot.seconds,
+                list(shot.lines),
+                shot_prompt(index, count, title, place, _shot_words(plan.lines, shot), direction),
+            )
+        )
+        for index, shot in enumerate(plan.shots)
     ]
 
 
-def payload_lines(planned: Planned) -> list[dict]:
-    return [asdict(line) for line in planned.lines]
+def payload_lines(plan: StoryPlan) -> list[dict]:
+    return [asdict(line) for line in plan.lines]
 
 
 def deadline_for(shots: int) -> datetime:
@@ -319,50 +369,102 @@ def deadline_for(shots: int) -> datetime:
     return datetime.now(UTC) + timedelta(seconds=get_settings().video_max_wait_seconds * shots)
 
 
-# --- retrying ---
+def _current(states: list[ShotState]) -> int | None:
+    return next((i for i, state in enumerate(states) if not state.file_key), None)
 
 
-def _current(shots: list[dict]) -> int | None:
-    return next((i for i, shot in enumerate(shots) if not shot["file_key"]), None)
+def _stopped(generation: VideoGeneration, job: Job | None) -> list[ShotState] | None:
+    """The shots of a narrated video that failed and can be looked at again, else None."""
+    if (
+        not generation.shots
+        or generation.file_key
+        or generation.payload.get("removed")
+        or job is None
+        or job.status != JobStatus.FAILED
+    ):
+        return None
+    return _states(generation)
+
+
+def current_shot(generation: VideoGeneration) -> int | None:
+    """The shot being worked on (1-based), while a narrated video is not finished."""
+    if not generation.shots or generation.file_key or generation.payload.get("removed"):
+        return None
+    index = _current(_states(generation))
+    return index + 1 if index is not None else None
 
 
 def retryable(generation: VideoGeneration, job: Job | None) -> bool:
-    """A failed narrated video can go on from where it stopped, unless a shot's submission
-    is uncertain (it may have been accepted and billed: that needs a person to check)."""
-    if not generation.shots or generation.file_key or job is None:
+    """A failed narrated video can go on from where it stopped, unless a shot's submission is
+    uncertain (it may have been accepted and billed: staff must confirm before resubmitting)."""
+    states = _stopped(generation, job)
+    if states is None:
         return False
-    if job.status != JobStatus.FAILED:
-        return False
-    index = _current(generation.shots)
-    if index is None:
-        return True  # joining failed: the shots are all there
-    shot = generation.shots[index]
-    return not (shot["submitted"] and not shot["request"])
+    index = _current(states)
+    return index is None or not states[index].uncertain
 
 
-async def retry(session, generation: VideoGeneration) -> None:
-    """Queue the next step again; a shot the provider rejected is submitted once more."""
-    shots = [dict(shot) for shot in generation.shots]
-    index = _current(shots)
-    if index is not None and shots[index]["failed"]:
-        shots[index].update(
-            attempt=shots[index]["attempt"] + 1, submitted=False, request=None, failed=False
-        )
-    remaining = len(shots) - (index if index is not None else len(shots)) or 1
+def needs_confirmation(generation: VideoGeneration, job: Job | None) -> bool:
+    states = _stopped(generation, job)
+    if states is None:
+        return False
+    index = _current(states)
+    return index is not None and states[index].uncertain
+
+
+def retry_plan(generation: VideoGeneration, confirm_resubmit: bool) -> tuple[list[dict], Decimal]:
+    """The shots after a retry, and the estimate of what they will still pay for. A shot the
+    provider rejected (or an uncertain one staff confirmed) is submitted again as a new
+    attempt; a shot whose check failed for another reason is checked again, not repaid."""
+    states = _states(generation)
+    index = _current(states)
+    if index is not None:
+        shot = states[index]
+        if shot.failed or (shot.uncertain and confirm_resubmit):
+            states[index] = replace(
+                shot, attempt=shot.attempt + 1, submitted=False, request=None, failed=False
+            )
+    adapter = provider(generation.provider)
+    estimate = sum(
+        (adapter.estimate_usd("video_submit", s.seconds) for s in states if not s.submitted),
+        Decimal(0),
+    )
+    return [asdict(state) for state in states], estimate
+
+
+async def queue_retry(session, generation: VideoGeneration, shots: list[dict]) -> None:
+    remaining = sum(1 for shot in shots if not shot["file_key"]) or 1
     job = await jobs.enqueue(
         session,
         KIND,
-        {
-            "generation_id": str(generation.id),
-            "deadline": deadline_for(remaining).isoformat(),
-        },
-        idempotency_key=f"{KIND}:{generation.id}:retry:{uuid.uuid4()}",
+        {"generation_id": str(generation.id), "deadline": deadline_for(remaining).isoformat()},
+        # Keyed by the failed step it follows, so a double click queues one retry.
+        idempotency_key=f"{KIND}:{generation.id}:after:{generation.job_id}",
         max_attempts=1,
         commit=False,
     )
     generation.shots = shots
     generation.job_id = job.id
-    generation.progress = "Retrying"
+    generation.progress = RETRYING
+
+
+async def remove_for_voice(session, voice_id: uuid.UUID) -> list[str]:
+    """Mark every narrated video voiced by a revoked clone as removed, in the caller's
+    transaction. Returns the folders to delete once it has committed."""
+    rows = (
+        await session.execute(
+            select(VideoGeneration).where(
+                VideoGeneration.payload["voice_clone_id"].astext == str(voice_id)
+            )
+        )
+    ).scalars()
+    folders = []
+    for generation in rows:
+        generation.payload = {**generation.payload, "removed": True}
+        generation.file_key = None
+        generation.progress = REMOVED
+        folders.append(_folder(generation))
+    return folders
 
 
 # --- the worker: one step per job ---
@@ -372,58 +474,53 @@ def _folder(generation: VideoGeneration) -> str:
     return f"stories/{generation.story_id}/videos/{generation.id}"
 
 
-def _container(name: str) -> tuple[str, str]:
-    """(file extension, FFmpeg demuxer) of a provider's clips."""
-    return (".webm", "matroska") if name == "fake" else (".mp4", "mov")
-
-
-async def _save(generation_id: uuid.UUID, index: int | None = None, progress=None, **changes):
+async def _update(generation_id: uuid.UUID, index: int | None = None, progress=None, **changes):
     async with get_sessionmaker()() as session:
         generation = await session.get(VideoGeneration, generation_id)
         if index is not None:
-            shots = [dict(shot) for shot in generation.shots]
-            shots[index].update(changes)
-            generation.shots = shots
+            states = _states(generation)
+            states[index] = replace(states[index], **changes)
+            _store(generation, states)
         if progress:
             generation.progress = progress
         await session.commit()
 
 
 @handler(KIND)
-async def step(payload: dict) -> dict:
+async def narrated_step(payload: dict) -> dict:
     generation_id = uuid.UUID(payload["generation_id"])
     deadline = datetime.fromisoformat(payload["deadline"])
     async with get_sessionmaker()() as session:
         generation = await session.get(VideoGeneration, generation_id)
-        if generation is None:
+        if generation is None or generation.payload.get("removed"):
             return {"stale": True}
         if generation.file_key:
             return {"file_key": generation.file_key}
-        shots = [dict(shot) for shot in generation.shots]
-    index = _current(shots)
+        states = _states(generation)
+    index = _current(states)
     if index is None:
         return await _join(generation_id)
-    shot = shots[index]
-    if not shot["submitted"]:
+    shot = states[index]
+    if not shot.submitted:
         await _submit(generation_id, index)
-        return await _again(generation_id, deadline, get_settings().video_poll_seconds)
-    if not shot["request"]:
+        return await _queue_next_step(generation_id, deadline, get_settings().video_poll_seconds)
+    if shot.uncertain:
         raise UserFacingError(
-            f"Shot {index + 1} could not be confirmed with the provider. "
-            "Check the provider before trying again."
+            f"Shot {index + 1} was never confirmed by the provider. Check the provider; staff "
+            "can submit it again, knowing it may be billed twice."
         )
     status = await _check(generation_id, index)
     if status == "done":
-        return await _again(generation_id, deadline, 0)
+        return await _queue_next_step(generation_id, deadline, 0)
     if datetime.now(UTC) >= deadline:
         raise UserFacingError(
             f"The provider is still rendering shot {index + 1}. "
             "Its request ID was saved for staff follow-up."
         )
-    return await _again(generation_id, deadline, get_settings().video_poll_seconds)
+    return await _queue_next_step(generation_id, deadline, get_settings().video_poll_seconds)
 
 
-async def _again(generation_id: uuid.UUID, deadline: datetime, delay: float) -> dict:
+async def _queue_next_step(generation_id: uuid.UUID, deadline: datetime, delay: float) -> dict:
     async with get_sessionmaker()() as session:
         generation = await session.get(VideoGeneration, generation_id)
         job = await jobs.enqueue(
@@ -441,6 +538,11 @@ async def _again(generation_id: uuid.UUID, deadline: datetime, delay: float) -> 
     return {"next": str(job.id)}
 
 
+async def _data_url(key: str) -> str:
+    image = await asyncio.to_thread(get_storage().path(key).read_bytes)
+    return "data:image/webp;base64," + base64.b64encode(image).decode()
+
+
 async def _submit(generation_id: uuid.UUID, index: int) -> None:
     settings = get_settings()
     async with get_sessionmaker()() as session:
@@ -449,78 +551,90 @@ async def _submit(generation_id: uuid.UUID, index: int) -> None:
             generation.provider != "fake" and not settings.live_ai_enabled
         ):
             raise UserFacingError("AI video generation is disabled for this demo.")
-        shots = generation.shots
-        shot = shots[index]
-        image_key = generation.image_key if index == 0 else shots[index - 1]["frame_key"]
+        states = _states(generation)
+        shot = states[index]
+        image_key = generation.image_key if index == 0 else states[index - 1].frame_key
+        reference_key = states[0].reference_key if index > 0 else None
         name, data, input_hash = generation.provider, generation.payload, generation.input_hash
-    count = len(shots)
-    # Marked before the call: if the answer is lost, the shot is known to be uncertain.
-    await _save(
-        generation_id,
-        index,
-        progress=f"Shot {index + 1} of {count}: submitting",
-        submitted=True,
-    )
+        # Marked before the call: if the answer is lost, the shot is known to be uncertain.
+        states[index] = replace(shot, submitted=True)
+        _store(generation, states)
+        generation.progress = SUBMITTING
+        await session.commit()
     arguments = {
         "model": data["model"],
-        "prompt": shot["prompt"],
+        "prompt": shot.prompt,
         "aspect_ratio": data["aspect_ratio"],
         "seed": data["seed"],
-        "seconds": shot["seconds"],
-        "request_id": f"{input_hash[:20]}-{index}-{shot['attempt']}",
+        "seconds": shot.seconds,
+        "request_id": f"{input_hash[:20]}-{index}-{shot.attempt}",
     }
     if image_key:
-        image = await asyncio.to_thread(get_storage().path(image_key).read_bytes)
-        arguments["image_url"] = "data:image/webp;base64," + base64.b64encode(image).decode()
+        arguments["image_url"] = await _data_url(image_key)
+    if reference_key:
+        arguments["reference_url"] = await _data_url(reference_key)
     adapter = provider(name)
     try:
         request = await gateway.call(
             "video_submit",
             adapter,
-            (input_hash, f"shot-{index}", f"try-{shot['attempt']}"),
-            shot["seconds"],
+            shot.cache_parts(input_hash, index),
+            shot.seconds,
             lambda: adapter.submit(arguments),
             charge_on_failure=True,
         )
-    except UserFacingError:
-        # Refused outright (live AI off, a cap, or the provider said no): nothing started.
-        await _save(generation_id, index, submitted=False)
+    except (NotStarted, gateway.LiveAIOff, gateway.SpendingLimit):
+        # Nothing started at the provider: the shot can simply be submitted again later.
+        await _update(generation_id, index, submitted=False)
         raise
     except (httpx.HTTPError, ValueError, KeyError) as exc:
         raise UserFacingError(
-            f"Shot {index + 1} could not be confirmed with the provider. "
-            "Check the provider before trying again."
+            f"Shot {index + 1} could not be confirmed with the provider. Check the provider; "
+            "staff can submit it again, knowing it may be billed twice."
         ) from exc
-    await _save(
-        generation_id,
-        index,
-        progress=f"Shot {index + 1} of {count}: rendering",
-        request=request,
+    await _update(generation_id, index, progress=RENDERING, request=request)
+
+
+async def _frame(clip, demuxer: str, at: float, key: str) -> None:
+    """One frame of a clip at `at` seconds, as WebP; a clip shorter than that is held."""
+    await render(
+        key,
+        *ffmpeg_inputs(demuxer, [clip]),
+        "-vf",
+        f"tpad=stop_mode=clone:stop_duration={at + 1:.3f},"
+        f"trim=start={max(at - 0.04, 0):.3f},setpts=PTS-STARTPTS",
+        "-frames:v",
+        "1",
+        "-c:v",
+        "libwebp",
+        "-f",
+        "webp",
     )
 
 
 async def _check(generation_id: uuid.UUID, index: int) -> str:
-    """Ask the provider once about a shot; when ready, store it and the frame to continue
-    from. Returns running, queued, unavailable or done."""
+    """Ask the provider once about a shot; when ready, store it, the frame to continue from
+    and (first shot) the reference frame of the people. Returns running, queued, unavailable
+    or done."""
     async with get_sessionmaker()() as session:
         generation = await session.get(VideoGeneration, generation_id)
-        shots = generation.shots
-        shot = shots[index]
+        states = _states(generation)
         name, input_hash, folder = generation.provider, generation.input_hash, _folder(generation)
-    count = len(shots)
+    shot, count = states[index], len(states)
     adapter = provider(name)
     try:
-        result = await adapter.poll(shot["request"])
+        result = await adapter.poll(shot.request)
         status = result["status"]
     except (httpx.HTTPError, ValueError, KeyError):
         return "unavailable"
-    except UserFacingError:
-        await _save(generation_id, index, failed=True)
+    except VideoRejected:
+        # The provider ended the job: a retry submits the shot again (a new paid attempt).
+        await _update(generation_id, index, failed=True)
         raise
     if status != "done":
-        await _save(generation_id, progress=f"Shot {index + 1} of {count}: rendering")
+        await _update(generation_id, progress=RENDERING)
         return status
-    extension, demuxer = _container(name)
+    extension = clip_extension(name)
 
     async def download() -> tuple[dict, bytes]:
         return {}, await adapter.download(result.get("video_url", ""))
@@ -529,7 +643,7 @@ async def _check(generation_id: uuid.UUID, index: int) -> str:
         _, cache_key = await gateway.call_file(
             "video_result",
             FreeVideoRead(name),
-            (input_hash, f"shot-{index}", f"try-{shot['attempt']}"),
+            shot.cache_parts(input_hash, index),
             0,
             download,
             extension,
@@ -539,30 +653,15 @@ async def _check(generation_id: uuid.UUID, index: int) -> str:
     storage = get_storage()
     clip_key = f"{folder}/shot-{index}{extension}"
     await asyncio.to_thread(storage.copy, cache_key, clip_key)
-    frame_key = None
+    clip, demuxer = storage.path(clip_key), DEMUXERS[extension]
+    changes: dict = {"file_key": clip_key}
     if index + 1 < count:
-        frame_key = f"{folder}/shot-{index}-end.webp"
-        span = (shot["end_ms"] - shot["start_ms"]) / 1000
-        await _render(
-            frame_key,
-            *_inputs(demuxer, [storage.path(clip_key)]),
-            "-vf",
-            f"tpad=stop_mode=clone:stop_duration={span:.3f},"
-            f"trim=start={max(span - 0.04, 0):.3f},setpts=PTS-STARTPTS",
-            "-frames:v",
-            "1",
-            "-c:v",
-            "libwebp",
-            "-f",
-            "webp",
-        )
-    await _save(
-        generation_id,
-        index,
-        progress=f"Shot {index + 1} of {count} ready",
-        file_key=clip_key,
-        frame_key=frame_key,
-    )
+        changes["frame_key"] = f"{folder}/shot-{index}-end.webp"
+        await _frame(clip, demuxer, shot.span, changes["frame_key"])
+        if index == 0:
+            changes["reference_key"] = f"{folder}/reference.webp"
+            await _frame(clip, demuxer, shot.span * REFERENCE_AT, changes["reference_key"])
+    await _update(generation_id, index, progress=SHOT_READY, **changes)
     return "done"
 
 
@@ -577,41 +676,47 @@ async def _has_audio(path) -> bool:
 
 
 async def _join(generation_id: uuid.UUID) -> dict:
-    """Join the shots, each cut or held to its planned length, lay the soundtrack over them
-    with the shots' own sound ducked underneath, and burn in the subtitles."""
+    """Join the shots, each cut or held to its planned length, hold the last frame for the
+    tail, lay the soundtrack over them (stopping at the last covered line) with the shots' own
+    sound ducked underneath, and burn in the subtitles."""
     async with get_sessionmaker()() as session:
         generation = await session.get(VideoGeneration, generation_id)
-        shots, data, name = generation.shots, generation.payload, generation.provider
+        states, data, name = _states(generation), generation.payload, generation.provider
         folder = _folder(generation)
-    await _save(generation_id, progress="Joining the shots")
+        generation.progress = JOINING
+        await session.commit()
     storage = get_storage()
     width, height = SIZES.get(data["aspect_ratio"], SIZES["16:9"])
-    total = shots[-1]["end_ms"] / 1000
-    _, demuxer = _container(name)
-    clips = [storage.path(shot["file_key"]) for shot in shots]
-    inputs = [arg for clip in clips for arg in _inputs(demuxer, [clip])]
-    inputs += _inputs("mp3", [storage.path(data["audio_key"])])
+    lines = [Line(**line) for line in data["lines"]]
+    tail = TAIL_MS / 1000
+    total = states[-1].end_ms / 1000 + tail
+    voice_end = (lines[-1].end_ms + LEAD_MS) / 1000
+    fade = min(VOICE_FADE_MS / 1000, voice_end)
+    demuxer = DEMUXERS[clip_extension(name)]
+    clips = [storage.path(state.file_key) for state in states]
+    inputs = [arg for clip in clips for arg in ffmpeg_inputs(demuxer, [clip])]
+    inputs += ffmpeg_inputs("mp3", [storage.path(data["audio_key"])])
     graph = []
-    for i, shot in enumerate(shots):
-        span = (shot["end_ms"] - shot["start_ms"]) / 1000
+    for i, state in enumerate(states):
         graph.append(
-            f"[{i}:v]tpad=stop_mode=clone:stop_duration={span:.3f},trim=duration={span:.3f},"
-            f"setpts=PTS-STARTPTS,fps=24,scale={width}:{height}:force_original_aspect_ratio="
-            f"decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p[v{i}]"
+            f"[{i}:v]tpad=stop_mode=clone:stop_duration={state.span:.3f},"
+            f"trim=duration={state.span:.3f},setpts=PTS-STARTPTS,fps=24,"
+            f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p[v{i}]"
         )
         if await _has_audio(clips[i]):
             graph.append(
                 f"[{i}:a]aformat=sample_rates=48000:channel_layouts=stereo,apad,"
-                f"atrim=duration={span:.3f},asetpts=PTS-STARTPTS[a{i}]"
+                f"atrim=duration={state.span:.3f},asetpts=PTS-STARTPTS[a{i}]"
             )
         else:
-            graph.append(f"anullsrc=r=48000:cl=stereo,atrim=duration={span:.3f}[a{i}]")
-    joined = "".join(f"[v{i}][a{i}]" for i in range(len(shots)))
-    graph.append(f"{joined}concat=n={len(shots)}:v=1:a=1[vcat][bed0]")
-    video = "[vcat]"
+            graph.append(f"anullsrc=r=48000:cl=stereo,atrim=duration={state.span:.3f}[a{i}]")
+    joined = "".join(f"[v{i}][a{i}]" for i in range(len(states)))
+    graph.append(f"{joined}concat=n={len(states)}:v=1:a=1[vcat][bed0]")
+    graph.append(f"[vcat]tpad=stop_mode=clone:stop_duration={tail:.3f}[vheld]")
+    video = "[vheld]"
     if data.get("subtitles"):
         captions_key = f"{folder}/subtitles.ass"
-        lines = [Line(**line) for line in data["lines"]]
         await asyncio.to_thread(
             storage.write_bytes,
             captions_key,
@@ -620,19 +725,20 @@ async def _join(generation_id: uuid.UUID) -> dict:
         path = str(storage.path(captions_key))
         if not SAFE_PATH.match(path):
             raise RuntimeError("The media folder path has characters FFmpeg filters cannot take.")
-        graph.append(f"[vcat]subtitles=filename={path}[vout]")
+        graph.append(f"[vheld]subtitles=filename={path}[vout]")
         video = "[vout]"
-    voice = len(shots)
+    voice = len(states)
     graph += [
         f"[{voice}:a]aformat=sample_rates=48000:channel_layouts=stereo,adelay={LEAD_MS}:all=1,"
+        f"atrim=duration={voice_end:.3f},afade=t=out:st={voice_end - fade:.3f}:d={fade:.3f},"
         f"apad,atrim=duration={total:.3f},asplit=2[voice][key]",
-        "[bed0]volume=0.6[bed]",
+        f"[bed0]apad,atrim=duration={total:.3f},volume=0.6[bed]",
         "[bed][key]sidechaincompress=threshold=0.02:ratio=12:attack=15:release=400[ducked]",
         "[ducked][voice]amix=inputs=2:duration=first:normalize=0,"
         "loudnorm=I=-16:TP=-1.5:LRA=11[aout]",
     ]
     target = f"{folder}/result.mp4"
-    await _render(
+    await render(
         target,
         *inputs,
         "-filter_complex", ";".join(graph),
@@ -642,7 +748,11 @@ async def _join(generation_id: uuid.UUID) -> dict:
     )  # fmt: skip
     async with get_sessionmaker()() as session:
         generation = await session.get(VideoGeneration, generation_id)
+        if generation is None or generation.payload.get("removed"):
+            # The narrator's voice was revoked while the shots were joined.
+            await asyncio.to_thread(storage.delete, target)
+            return {"stale": True}
         generation.file_key = target
-        generation.progress = "Video ready"
+        generation.progress = READY
         await session.commit()
-    return {"file_key": target, "shots": len(shots)}
+    return {"file_key": target, "shots": len(states)}

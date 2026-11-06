@@ -7,6 +7,7 @@ timing, audio and subtitles are the real thing.
 
 import base64
 import json
+import re
 import subprocess
 import tempfile
 import uuid
@@ -20,8 +21,16 @@ from sqlalchemy import select
 from app import gateway, photos
 from app.config import get_settings
 from app.errors import UserFacingError
-from app.models import Asset, Narration, SpendEntry, Story, TextLayer, VideoGeneration
-from app.narrated_video import LEAD_MS, TAIL_MS, Line, Shot, plan, shot_prompt, subtitles
+from app.models import (
+    Asset,
+    Narration,
+    SpendEntry,
+    Story,
+    TextLayer,
+    VideoGeneration,
+    VoiceClone,
+)
+from app.narrated_video import LEAD_MS, TAIL_MS, Line, Shot, plan_shots, shot_prompt, subtitles
 from app.storage import get_storage
 from tests.http_mock import mock_http
 from tests.test_moderation import drain
@@ -86,23 +95,23 @@ def lines_every(ms: int, count: int) -> list[Line]:
 
 
 def test_shots_cut_at_line_boundaries_within_the_longest_shot():
-    kept, shots = plan(lines_every(4000, 5), max_shot_seconds=15, max_total_seconds=60)
+    kept, shots = plan_shots(lines_every(4000, 5), max_shot_seconds=15, max_total_seconds=60)
     assert len(kept) == 5
-    total = 20000 + LEAD_MS + TAIL_MS
-    # Cuts fall where a line starts (in video time, after the lead-in), never past 15 s.
+    # Cuts fall where a line starts (in video time, after the lead-in), never past 15 s. The
+    # last shot ends with the last word: the tail is the held last frame, not asked for.
     assert shots == [
         Shot(0, 12000 + LEAD_MS, 13, (0, 1, 2)),
-        Shot(12000 + LEAD_MS, total, 9, (3, 4)),
+        Shot(12000 + LEAD_MS, 20000 + LEAD_MS, 8, (3, 4)),
     ]
 
 
 def test_a_minute_of_soundtrack_becomes_contiguous_shots_of_at_most_15_seconds():
-    kept, shots = plan(lines_every(4000, 20), max_shot_seconds=15, max_total_seconds=60)
+    kept, shots = plan_shots(lines_every(4000, 20), max_shot_seconds=15, max_total_seconds=60)
     # Whole lines only: the last kept line must end, with lead-in and tail, within 60 s.
     assert kept[-1].end_ms + LEAD_MS + TAIL_MS <= 60_000
     assert len(kept) == 14
     assert shots[0].start_ms == 0
-    assert shots[-1].end_ms == kept[-1].end_ms + LEAD_MS + TAIL_MS
+    assert shots[-1].end_ms == kept[-1].end_ms + LEAD_MS
     for before, after in zip(shots, shots[1:], strict=False):
         assert before.end_ms == after.start_ms
         assert after.start_ms - LEAD_MS in {line.start_ms for line in kept}
@@ -113,25 +122,25 @@ def test_a_minute_of_soundtrack_becomes_contiguous_shots_of_at_most_15_seconds()
 
 def test_a_line_longer_than_a_shot_is_split_evenly():
     lines = [Line(0, 20000, "طويل", "Long."), Line(20000, 24000, "قصير", "Short.")]
-    _, shots = plan(lines, max_shot_seconds=15, max_total_seconds=60)
+    _, shots = plan_shots(lines, max_shot_seconds=15, max_total_seconds=60)
     first_cut = 20000 + LEAD_MS
     assert shots == [
         Shot(0, first_cut // 2, 11, (0,)),
         Shot(first_cut // 2, first_cut, 11, (0,)),
-        Shot(first_cut, 24000 + LEAD_MS + TAIL_MS, 5, (1,)),
+        Shot(first_cut, 24000 + LEAD_MS, 4, (1,)),
     ]
 
 
 def test_a_short_last_shot_still_asks_for_the_shortest_length():
-    lines = [Line(0, 14000, "أ", "A."), Line(14000, 14500, "ب", "B.")]
-    _, shots = plan(lines, max_shot_seconds=15, max_total_seconds=60)
+    lines = [Line(0, 14500, "أ", "A."), Line(14500, 15000, "ب", "B.")]
+    _, shots = plan_shots(lines, max_shot_seconds=15, max_total_seconds=60)
     assert shots[-1].end_ms - shots[-1].start_ms < 3000
     assert shots[-1].seconds == 3
 
 
 def test_a_soundtrack_that_does_not_fit_at_all_is_refused():
     with pytest.raises(UserFacingError, match="longer"):
-        plan([Line(0, 70_000, "طويل", "Long.")], max_shot_seconds=15, max_total_seconds=60)
+        plan_shots([Line(0, 70_000, "طويل", "Long.")], max_shot_seconds=15, max_total_seconds=60)
 
 
 def test_each_shot_prompt_carries_its_words_and_the_continuity():
@@ -152,8 +161,9 @@ def test_subtitles_put_the_spoken_arabic_above_its_english():
     assert "PlayResX: 1280" in ass and "PlayResY: 720" in ass
     (first,) = [row for row in ass.splitlines() if row.startswith("Dialogue: 0,0:00:00.30,")]
     assert first.startswith("Dialogue: 0,0:00:00.30,0:00:04.30,")
-    # Right-to-left marks keep the Arabic full stop at the end of the right-to-left line.
-    assert "‏سطر 0.‏" in first
+    # A right-to-left embedding keeps the Arabic word order and its closing full stop right,
+    # even with Latin words inside.
+    assert "\u202bسطر 0.\u202c" in first
     assert first.index("سطر 0.") < first.index("\\N") < first.index("Line 0.")
 
 
@@ -161,7 +171,7 @@ def test_english_stories_get_one_subtitle_line():
     lines = [Line(0, 3000, "The well was ours.", None)]
     ass = subtitles(lines, 720, 1280, rtl=False)
     (row,) = [r for r in ass.splitlines() if r.startswith("Dialogue:")]
-    assert "\\N" not in row and "‏" not in row
+    assert "\\N" not in row and "\u202b" not in row
     assert "The well was ours." in row
     assert "PlayResX: 720" in ass and "PlayResY: 1280" in ass
 
@@ -206,20 +216,32 @@ async def test_room_check_refuses_what_would_pass_a_cap(sessionmaker):
 
 class FakeGoogle:
     """Answers the Interactions API: each submission renders on the second check, as a real
-    clip of the length asked for. Interactions in `fail` end as failed; `refuse_submit`
-    answers submissions with 503."""
+    clip of the length asked for. Interactions in `fail` end as failed, those in `unknown`
+    answer their first check with a status nobody knows; `refuse_submit` answers submissions
+    with 503 (outcome unknown), `refuse_status` with that 4xx (refused outright)."""
 
-    def __init__(self, fail: set[str] | None = None, refuse_submit: bool = False):
+    def __init__(
+        self,
+        fail: set[str] | None = None,
+        refuse_submit: bool = False,
+        unknown: set[str] | None = None,
+        refuse_status: int | None = None,
+    ):
         self.posts: list[dict] = []
         self.checks: dict[str, int] = {}
         self.lengths: dict[str, int] = {}
         self.fail = fail or set()
         self.refuse_submit = refuse_submit
+        self.unknown = set(unknown or ())
+        self.refuse_status = refuse_status
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         if request.method == "POST":
             if self.refuse_submit:
                 return httpx.Response(503)
+            if self.refuse_status:
+                error = {"code": self.refuse_status, "message": "no", "status": "REFUSED"}
+                return httpx.Response(self.refuse_status, json=[{"error": error}])
             body = json.loads(request.content)
             self.posts.append(body)
             interaction = f"v1_shot{len(self.posts)}"
@@ -229,6 +251,9 @@ class FakeGoogle:
         self.checks[interaction] = self.checks.get(interaction, 0) + 1
         if interaction in self.fail:
             return httpx.Response(200, json={"id": interaction, "status": "failed"})
+        if interaction in self.unknown:
+            self.unknown.discard(interaction)
+            return httpx.Response(200, json={"id": interaction, "status": "something_new"})
         if self.checks[interaction] == 1:
             return httpx.Response(200, json={"id": interaction, "status": "in_progress"})
         video = base64.b64encode(clip(self.lengths[interaction])).decode()
@@ -257,7 +282,16 @@ def omni_live(monkeypatch):
 
 
 async def story_with_soundtrack(
-    client, session, sessionmaker, monkeypatch, *, narration=True, recording=False, count=5
+    client,
+    session,
+    sessionmaker,
+    monkeypatch,
+    *,
+    narration=True,
+    recording=False,
+    count=5,
+    english=True,
+    cloned=False,
 ):
     """A published Jordanian story with a photo, 4-second lines, an English translation and
     a narration and/or a recording."""
@@ -275,11 +309,34 @@ async def story_with_soundtrack(
     storage = get_storage()
     lines = lines_every(4000, count)
     timed = [{"start_ms": x.start_ms, "end_ms": x.end_ms, "text": x.spoken} for x in lines]
-    english = [{"start_ms": x.start_ms, "end_ms": x.end_ms, "text": x.english} for x in lines]
     session.add(TextLayer(story_id=story.id, kind="polished", language="jordanian", segments=timed))
-    session.add(
-        TextLayer(story_id=story.id, kind="translation_en", language="english", segments=english)
-    )
+    if english:
+        session.add(
+            TextLayer(
+                story_id=story.id,
+                kind="translation_en",
+                language="english",
+                segments=[
+                    {"start_ms": x.start_ms, "end_ms": x.end_ms, "text": x.english} for x in lines
+                ],
+            )
+        )
+    clone = None
+    if cloned:
+        clone = VoiceClone(
+            id=uuid.uuid4(),
+            actor_id=uuid.UUID(user["id"]),
+            request_id="clone-test",
+            speaker_name="Salma",
+            consent={"speaker_confirmed": True},
+            sample_key="voices/test/sample.mp3",
+            sample_hash="test",
+            duration_ms=30_000,
+            provider="fake",
+            provider_voice_id="demo-consenting-voice",
+        )
+        session.add(clone)
+        await session.flush()
     if narration:
         key = f"stories/{story.id}/narration/test.mp3"
         storage.write_bytes(key, tone(count * 4))
@@ -303,6 +360,7 @@ async def story_with_soundtrack(
                 timing="alignment",
                 segments=timed,
                 input_hash="test",
+                voice_clone_id=clone.id if clone else None,
             )
         )
     if recording:
@@ -358,10 +416,11 @@ async def test_the_plan_is_shown_before_anything_is_queued(
     response = await client.post("/api/v1/staff/videos/plan", json=narrated(story))
     assert response.status_code == 200, response.text
     shown = response.json()
-    assert [(shot["seconds"], shot["lines"]) for shot in shown["shots"]] == [(13, 3), (9, 2)]
+    assert [(shot["seconds"], shot["lines"]) for shot in shown["shots"]] == [(13, 3), (8, 2)]
     assert shown["seconds"] == pytest.approx(20.9)
     assert (shown["lines"], shown["lines_total"]) == (5, 5)
-    assert Decimal(shown["estimate_usd"]) == Decimal("1.76")  # (13 + 9) s at 0.08
+    assert Decimal(shown["estimate_usd"]) == Decimal("1.68")  # (13 + 8) s at 0.08
+    assert shown["english"] is True
     assert (await session.execute(select(VideoGeneration))).scalars().all() == []
 
 
@@ -383,7 +442,7 @@ async def test_a_narrated_video_is_chained_joined_voiced_and_subtitled(
     # Two shots, one after another: the first from the story photo, the second from the
     # frame where the first is cut, each asking for its own length.
     first, second = google.posts
-    assert [p["response_format"]["duration"] for p in google.posts] == ["13s", "9s"]
+    assert [p["response_format"]["duration"] for p in google.posts] == ["13s", "8s"]
     photo = (await photos.slideshow_images(None, story))[0]
     assert base64.b64decode(first["input"][0]["data"]) == get_storage().path(photo).read_bytes()
     chained = base64.b64decode(second["input"][0]["data"])
@@ -391,8 +450,14 @@ async def test_a_narrated_video_is_chained_joined_voiced_and_subtitled(
     assert chained != base64.b64decode(first["input"][0]["data"])
     assert "Shot 1 of 2" in first["input"][1]["text"]
     assert "Line 0." in first["input"][1]["text"] and "Line 3." not in first["input"][1]["text"]
-    assert "Shot 2 of 2" in second["input"][1]["text"]
-    assert "Line 3." in second["input"][1]["text"] and "Line 4." in second["input"][1]["text"]
+    # The second shot starts from the cut frame and also gets the reference frame of the
+    # people from the first shot; the prompt says which image is which.
+    assert len(first["input"]) == 2 and len(second["input"]) == 3
+    reference = base64.b64decode(second["input"][1]["data"])
+    assert reference[:4] == b"RIFF" and reference != chained
+    prompt = second["input"][2]["text"]
+    assert "Shot 2 of 2" in prompt and "second image" in prompt
+    assert "Line 3." in prompt and "Line 4." in prompt
 
     media = await client.get(done["video_url"])
     assert media.headers["content-type"] == "video/mp4"
@@ -406,7 +471,8 @@ async def test_a_narrated_video_is_chained_joined_voiced_and_subtitled(
     folder = f"stories/{story.id}/videos/{generation.id}"
     captions = get_storage().path(f"{folder}/subtitles.ass").read_text(encoding="utf-8")
     assert "Line 4." in captions and "سطر 4." in captions
-    assert await ledger(session) == [Decimal("1.04"), Decimal("0.72")]
+    assert reference == get_storage().path(f"{folder}/reference.webp").read_bytes()
+    assert await ledger(session) == [Decimal("1.04"), Decimal("0.64")]
 
 
 async def test_a_rehearsal_with_the_fake_provider_needs_no_keys(
@@ -455,8 +521,8 @@ async def test_a_failed_shot_is_retried_without_redoing_finished_ones(
     assert done["status"] == "done", done
     # Shot 1 was not made again; shot 2 was submitted once more as a new paid attempt.
     assert len(google.posts) == 3
-    assert google.posts[1]["input"][0] == google.posts[2]["input"][0]
-    assert await ledger(session) == [Decimal("1.04"), Decimal("0.72"), Decimal("0.72")]
+    assert google.posts[1]["input"][:2] == google.posts[2]["input"][:2]
+    assert await ledger(session) == [Decimal("1.04"), Decimal("0.64"), Decimal("0.64")]
 
 
 async def test_an_uncertain_shot_submission_is_not_retried(
@@ -469,7 +535,7 @@ async def test_an_uncertain_shot_submission_is_not_retried(
     failed = (await client.get(f"/api/v1/staff/videos/{generation_id}")).json()
     assert failed["status"] == "failed"
     assert "could not be confirmed" in failed["error"]
-    assert failed["retryable"] is False
+    assert failed["retryable"] is False and failed["needs_confirmation"] is True
     assert (await client.post(f"/api/v1/staff/videos/{generation_id}/retry")).status_code == 409
     # The uncertain submission stays counted: Google may have started (and billed) it.
     assert await ledger(session) == [Decimal("1.04")]
@@ -513,3 +579,175 @@ async def test_fixed_length_providers_are_not_offered_for_narrated_videos(
     shots = {item["id"]: item.get("max_shot_seconds") for item in config["providers"]}
     assert shots["gemini_omni"] == 15 and shots["fake"] == 15 and shots["fal"] is None
     assert config["narrated_max_seconds"] == 60
+
+
+def loudness(data: bytes, start: float, seconds: float) -> float:
+    """Mean volume in dB of a stretch of a video's sound (-inf for digital silence)."""
+    with tempfile.NamedTemporaryFile(suffix=".mp4") as f:
+        f.write(data)
+        f.flush()
+        out = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-ss", str(start), "-t", str(seconds), "-i", f.name,
+             "-vn", "-af", "volumedetect", "-f", "null", "-"],
+            capture_output=True, text=True,
+        ).stderr  # fmt: skip
+    found = re.search(r"mean_volume: (-?[\d.]+|-inf) dB", out)
+    return float(found.group(1)) if found else float("-inf")
+
+
+async def test_the_voice_stops_at_the_last_line_the_video_covers(
+    client, session, sessionmaker, monkeypatch
+):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "enable_ai_video", True)
+    monkeypatch.setattr(settings, "narrated_video_max_seconds", 10)
+    # 20 s of narration, but only the first two 4-second lines fit in 10 s.
+    story = await story_with_soundtrack(client, session, sessionmaker, monkeypatch)
+    queued = await client.post("/api/v1/staff/videos", json=narrated(story, provider="fake"))
+    assert queued.json()["seconds"] == pytest.approx(8000 / 1000 + (LEAD_MS + TAIL_MS) / 1000)
+    await drain(sessionmaker)
+    done = (await client.get(f"/api/v1/staff/videos/{queued.json()['id']}")).json()
+    media = (await client.get(done["video_url"])).content
+    assert probe(media)["seconds"] == pytest.approx(8.9, abs=0.15)
+    # The demo clips are silent, so what is heard is the voice: there while the two lines
+    # play, gone after the second line ends at 8.3 s (the third line is never heard).
+    assert loudness(media, 1.0, 6.0) > -40
+    assert loudness(media, 8.45, 0.4) < -70
+
+
+async def test_a_check_that_fails_for_another_reason_is_checked_again_not_paid_twice(
+    client, session, sessionmaker, monkeypatch, omni_live
+):
+    story = await story_with_soundtrack(client, session, sessionmaker, monkeypatch)
+    google = FakeGoogle(unknown={"v1_shot2"})
+    mock_http(monkeypatch, google)
+    generation_id = (await client.post("/api/v1/staff/videos", json=narrated(story))).json()["id"]
+    await drain(sessionmaker)
+    failed = (await client.get(f"/api/v1/staff/videos/{generation_id}")).json()
+    assert failed["status"] == "failed" and failed["retryable"] is True
+    assert (await client.post(f"/api/v1/staff/videos/{generation_id}/retry")).status_code == 202
+    await drain(sessionmaker)
+    done = (await client.get(f"/api/v1/staff/videos/{generation_id}")).json()
+    assert done["status"] == "done", done
+    # Shot 2 was asked about again, not submitted again.
+    assert len(google.posts) == 2
+    assert await ledger(session) == [Decimal("1.04"), Decimal("0.64")]
+
+
+async def test_an_uncertain_shot_is_submitted_again_only_when_staff_confirm(
+    client, session, sessionmaker, monkeypatch, omni_live
+):
+    story = await story_with_soundtrack(client, session, sessionmaker, monkeypatch)
+    google = FakeGoogle(refuse_submit=True)
+    mock_http(monkeypatch, google)
+    generation_id = (await client.post("/api/v1/staff/videos", json=narrated(story))).json()["id"]
+    await drain(sessionmaker)
+    url = f"/api/v1/staff/videos/{generation_id}/retry"
+    assert (await client.post(url)).status_code == 409
+    google.refuse_submit = False
+    confirmed = await client.post(url, json={"confirm_resubmit": True})
+    assert confirmed.status_code == 202, confirmed.text
+    await drain(sessionmaker)
+    done = (await client.get(f"/api/v1/staff/videos/{generation_id}")).json()
+    assert done["status"] == "done", done
+    # The unknown first submission stays counted; the confirmed one is a new paid attempt.
+    assert await ledger(session) == [Decimal("1.04"), Decimal("1.04"), Decimal("0.64")]
+
+
+async def test_a_shot_refused_outright_is_released_not_counted(
+    client, session, sessionmaker, monkeypatch, omni_live
+):
+    story = await story_with_soundtrack(client, session, sessionmaker, monkeypatch)
+    mock_http(monkeypatch, FakeGoogle(refuse_status=429))
+    generation_id = (await client.post("/api/v1/staff/videos", json=narrated(story))).json()["id"]
+    await drain(sessionmaker)
+    failed = (await client.get(f"/api/v1/staff/videos/{generation_id}")).json()
+    assert failed["status"] == "failed" and "paid tier" in failed["error"]
+    assert failed["retryable"] is True and failed["needs_confirmation"] is False
+    assert await ledger(session) == []
+    session.expire_all()
+    (released,) = (await session.execute(select(SpendEntry))).scalars().all()
+    assert released.state == "released"
+
+
+async def test_a_retry_needs_room_for_the_shots_still_to_make(
+    client, session, sessionmaker, monkeypatch, omni_live
+):
+    story = await story_with_soundtrack(client, session, sessionmaker, monkeypatch)
+    mock_http(monkeypatch, FakeGoogle(fail={"v1_shot2"}))
+    generation_id = (await client.post("/api/v1/staff/videos", json=narrated(story))).json()["id"]
+    await drain(sessionmaker)
+    # 1.68 USD spent; shot 2 again needs 0.64 more, which a 2 USD total cap cannot take.
+    monkeypatch.setattr(omni_live, "spend_cap_usd_total", 2.0)
+    response = await client.post(f"/api/v1/staff/videos/{generation_id}/retry")
+    assert response.status_code == 422
+    assert "spending limit" in response.json()["detail"]
+    still = (await client.get(f"/api/v1/staff/videos/{generation_id}")).json()
+    assert still["status"] == "failed"
+
+
+async def test_revoking_the_narrators_voice_removes_the_narrated_video(
+    client, session, sessionmaker, monkeypatch
+):
+    monkeypatch.setattr(get_settings(), "enable_ai_video", True)
+    story = await story_with_soundtrack(client, session, sessionmaker, monkeypatch, cloned=True)
+    generation_id = (
+        await client.post("/api/v1/staff/videos", json=narrated(story, provider="fake"))
+    ).json()["id"]
+    await drain(sessionmaker)
+    assert (await client.get(f"/api/v1/staff/videos/{generation_id}")).json()["status"] == "done"
+    folder = f"stories/{story.id}/videos/{generation_id}"
+    assert get_storage().exists(f"{folder}/result.mp4")
+
+    clone_id = (
+        await session.execute(
+            select(Narration.voice_clone_id).where(Narration.story_id == story.id)
+        )
+    ).scalar_one()
+    assert (await client.post(f"/api/v1/staff/voices/{clone_id}/revoke")).status_code == 200
+    removed = (await client.get(f"/api/v1/staff/videos/{generation_id}")).json()
+    assert removed["video_url"] is None
+    assert removed["progress"] == "Removed: the narrator's voice was revoked"
+    assert removed["retryable"] is False
+    assert not get_storage().exists(f"{folder}/result.mp4")
+    assert not get_storage().exists(f"{folder}/soundtrack.mp3")
+    assert (await client.get(f"/api/v1/staff/videos/{generation_id}/media")).status_code == 404
+
+
+async def test_renaming_the_story_makes_a_new_video_request(
+    client, session, sessionmaker, monkeypatch
+):
+    monkeypatch.setattr(get_settings(), "enable_ai_video", True)
+    story = await story_with_soundtrack(client, session, sessionmaker, monkeypatch)
+    body = narrated(story, provider="fake")
+    first = (await client.post("/api/v1/staff/videos", json=body)).json()["id"]
+    assert (await client.post("/api/v1/staff/videos", json=body)).json()["id"] == first
+    story.title = "Petra at dusk"
+    await session.commit()
+    # The shots' prompts name the story, so a rename is a new request, not the old video.
+    assert (await client.post("/api/v1/staff/videos", json=body)).json()["id"] != first
+
+
+async def test_progress_is_a_fixed_message_with_the_shot_number(
+    client, session, sessionmaker, monkeypatch, omni_live
+):
+    from app.worker import run_one
+
+    story = await story_with_soundtrack(client, session, sessionmaker, monkeypatch)
+    mock_http(monkeypatch, FakeGoogle())
+    generation_id = (await client.post("/api/v1/staff/videos", json=narrated(story))).json()["id"]
+    assert await run_one(sessionmaker)  # submits shot 1
+    shown = (await client.get(f"/api/v1/staff/videos/{generation_id}")).json()
+    assert (shown["progress"], shown["shot"], shown["shots"]) == ("Rendering a shot", 1, 2)
+    await drain(sessionmaker)
+    shown = (await client.get(f"/api/v1/staff/videos/{generation_id}")).json()
+    assert (shown["progress"], shown["shot"]) == ("Video ready", None)
+
+
+async def test_without_an_english_translation_the_plan_says_so(
+    client, session, sessionmaker, monkeypatch, omni_live
+):
+    story = await story_with_soundtrack(client, session, sessionmaker, monkeypatch, english=False)
+    shown = (await client.post("/api/v1/staff/videos/plan", json=narrated(story))).json()
+    assert shown["english"] is False
+    assert len(shown["shots"]) == 2

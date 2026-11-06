@@ -20,7 +20,6 @@ export interface NarratedPlanRequest {
   aspect_ratio: '16:9' | '9:16'
   mode: 'narrated'
   soundtrack: Soundtrack
-  subtitles: boolean
 }
 export interface NarratedPlan {
   shots: { start_ms: number; end_ms: number; seconds: number; lines: number }[]
@@ -28,6 +27,8 @@ export interface NarratedPlan {
   estimate_usd: string
   lines: number
   lines_total: number
+  /** False when not every line has an English translation: prompts use the spoken text. */
+  english: boolean
 }
 export interface VideoJobResult {
   id: string
@@ -43,7 +44,11 @@ export interface VideoJobResult {
   mode?: VideoMode
   shots?: number
   seconds?: number | null
+  /** The shot being worked on (1-based); null when there is none. */
+  shot?: number | null
   retryable?: boolean
+  /** A shot's submission was never confirmed: submitting it again may be billed twice. */
+  needs_confirmation?: boolean
 }
 export interface VideoConfig {
   enabled: boolean
@@ -67,8 +72,13 @@ export const generateVideo = (payload: VideoPromptPayload): Promise<VideoJobResu
   api<VideoJobResult>('/staff/videos', { body: payload })
 export const planVideo = (payload: NarratedPlanRequest): Promise<NarratedPlan> =>
   api<NarratedPlan>('/staff/videos/plan', { body: payload })
-export const retryVideo = (id: string): Promise<VideoJobResult> =>
-  api<VideoJobResult>(`/staff/videos/${id}/retry`, { method: 'POST' })
+/** Go on from where a narrated video stopped. `confirmResubmit` submits an unconfirmed shot
+ * again, knowing it may be billed twice. */
+export const retryVideo = (id: string, confirmResubmit = false): Promise<VideoJobResult> =>
+  api<VideoJobResult>(
+    `/staff/videos/${id}/retry`,
+    confirmResubmit ? { body: { confirm_resubmit: true } } : { method: 'POST' },
+  )
 /** Seconds as M:SS. */
 export function formatLength(seconds: number): string {
   const whole = Math.max(0, Math.round(seconds))

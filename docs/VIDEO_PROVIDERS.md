@@ -73,6 +73,27 @@ Contracts checked 2026-11-06:
 - https://ai.google.dev/gemini-api/docs/background-execution
 - https://ai.google.dev/gemini-api/docs/pricing
 
+## Narrated videos (up to a minute)
+
+Staff choose "Narrated video" on the staff video page (`mode: "narrated"` on
+`POST /api/v1/staff/videos`; `POST /api/v1/staff/videos/plan` shows the shots, length, lines
+covered and estimated cost first). Offered for Gemini Omni Flash and the offline fake only.
+
+- The soundtrack (the story's narration, in the default or a consenting cloned voice, or the
+  storyteller's recording) is cut into shots of up to 15 s at line boundaries, up to
+  `NARRATED_VIDEO_MAX_SECONDS` (60). Each shot's prompt is the English text spoken during it.
+- Shot 1 starts from the story photo; each later shot starts from the frame where the previous
+  one is cut and also gets a reference frame of the people from shot 1, so faces and clothes
+  stay the same. Omni takes several images per request and the prompt says which is which.
+- FFmpeg joins the shots (each cut or held to its planned length), lays the soundtrack over them
+  with Omni's sound ducked underneath, stops the voice at the last covered line, holds the last
+  frame for 0.6 s and burns in Arabic + English subtitles.
+- Each shot is its own ledger entry. The whole estimate (and, on a retry, what is still to pay)
+  must fit the caps before anything is queued. `POST /api/v1/staff/videos/<id>/retry` goes on
+  from the failed shot; `{"confirm_resubmit": true}` sends an unconfirmed shot again.
+- Live result (2026-11-06): a 53 s video of five shots (12/15/13/11/6 s) rendered in under six
+  minutes for about 3.96 USD at Google's price.
+
 ## Self-hosted Cog
 
 Deploy a video predictor whose input schema accepts `prompt`, `image` (data URI),

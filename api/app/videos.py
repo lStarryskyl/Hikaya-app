@@ -6,6 +6,7 @@ import hashlib
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Literal
 
 import httpx
@@ -23,7 +24,7 @@ from app.db import get_session, get_sessionmaker
 from app.errors import INTERNAL_PREFIX, UserFacingError
 from app.handlers import handler
 from app.models import Job, Role, Story, TextLayer, User, VideoGeneration
-from app.providers.video import FreeVideoRead, configurations, provider
+from app.providers.video import FreeVideoRead, clip_extension, configurations, provider
 from app.storage import get_storage
 
 router = APIRouter(prefix="/staff/videos", tags=["videos"])
@@ -65,6 +66,8 @@ async def output(session: AsyncSession, generation: VideoGeneration) -> dict:
         "shots": len(generation.shots),
         "seconds": generation.payload.get("seconds"),
         "retryable": narrated_video.retryable(generation, job),
+        "needs_confirmation": narrated_video.needs_confirmation(generation, job),
+        "shot": narrated_video.current_shot(generation),
     }
 
 
@@ -85,9 +88,77 @@ def _choose(body: VideoIn) -> dict:
     return selected
 
 
-async def _plan_narrated(
+async def _story_or_404(session: AsyncSession, story_id: uuid.UUID) -> Story:
+    story = await session.get(Story, story_id)
+    if not story:
+        raise HTTPException(404, "Story not found.")
+    return story
+
+
+async def _story_photo(
+    session: AsyncSession, story: Story, provider_name: str
+) -> tuple[bytes | None, str]:
+    """The story's first photo (the video's opening frame) and its hash. Only the offline
+    demo can do without one."""
+    images = await photos.slideshow_images(session, story)
+    if not images:
+        if provider_name != "fake":
+            raise HTTPException(422, "Add a story photo before generating an AI video.")
+        return None, ""
+    storage = get_storage()
+    if not storage.exists(images[0]):
+        raise HTTPException(422, "The story photo is missing. Choose another photo.")
+    data = await asyncio.to_thread(storage.path(images[0]).read_bytes)
+    return data, hashlib.sha256(data).hexdigest()
+
+
+def _digest(*parts) -> str:
+    """A request's identity: the same input reuses the existing video and its cache."""
+    return hashlib.sha256(json.dumps(list(parts), sort_keys=True).encode()).hexdigest()
+
+
+async def _existing(session: AsyncSession, digest: str) -> VideoGeneration | None:
+    return (
+        await session.execute(select(VideoGeneration).where(VideoGeneration.input_hash == digest))
+    ).scalar_one_or_none()
+
+
+async def _ensure_room(provider_name: str, estimate: Decimal) -> None:
+    """Refuse (422) work whose estimate would pass a spending cap now; reserves nothing."""
+    budget = provider(provider_name).budget
+    if not budget or estimate <= 0:
+        return
+    try:
+        await gateway.check_room(budget, estimate)
+    except gateway.SpendingLimit as exc:
+        raise HTTPException(
+            422,
+            f"This video (about {estimate:.2f} USD) would pass the {exc.which} spending limit, "
+            "so nothing was queued.",
+        ) from None
+
+
+async def _record(
+    session: AsyncSession, generation: VideoGeneration, kind: str, job_payload: dict, key: str
+) -> dict:
+    """Queue the video's first job and store the video in one transaction."""
+    try:
+        job = await jobs.enqueue(
+            session, kind, job_payload, idempotency_key=key, max_attempts=1, commit=False
+        )
+        generation.job_id = job.id
+        session.add(generation)
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        get_storage().delete_tree(f"stories/{generation.story_id}/videos/{generation.id}")
+        raise HTTPException(409, "This video was already queued. Refresh the job list.") from None
+    return await output(session, generation)
+
+
+async def _narrated_plan(
     session: AsyncSession, body: VideoIn, selected: dict
-) -> tuple[Story, narrated_video.Planned]:
+) -> tuple[Story, narrated_video.StoryPlan]:
     """The plan for a narrated video, refused (422) when it cannot be made or would not fit
     the spending budget. Reads the database only; no provider is called."""
     if not selected.get("max_shot_seconds"):
@@ -96,54 +167,34 @@ async def _plan_narrated(
             "This provider makes fixed-length clips and is not offered for narrated videos; "
             "choose Gemini Omni Flash.",
         )
-    story = await session.get(Story, body.story_id)
-    if not story:
-        raise HTTPException(404, "Story not found.")
+    story = await _story_or_404(session, body.story_id)
     try:
-        planned = await narrated_video.plan_for(
-            session, story, body.provider, selected["max_shot_seconds"], body.soundtrack
-        )
+        plan = await narrated_video.plan_story(session, story, body.provider, body.soundtrack)
     except UserFacingError as exc:
         raise HTTPException(422, str(exc)) from None
-    budget = provider(body.provider).budget
-    if budget and planned.estimate > 0:
-        try:
-            await gateway.check_room(budget, planned.estimate)
-        except gateway.SpendingLimit as exc:
-            raise HTTPException(
-                422,
-                f"This video (about {planned.estimate:.2f} USD) would pass the {exc.which} "
-                "spending limit, so nothing was queued.",
-            ) from None
-    return story, planned
+    await _ensure_room(body.provider, plan.estimate)
+    return story, plan
 
 
 @router.post("/plan")
-async def plan_video(
+async def preview_plan(
     body: VideoIn, user: User = Depends(staff), session: AsyncSession = Depends(get_session)
 ) -> dict:
     """What a narrated video would be (shots, length, lines covered, estimated cost) before
     anything is queued or paid for."""
-    _, planned = await _plan_narrated(session, body, _choose(body))
-    return planned.summary()
+    _, plan = await _narrated_plan(session, body, _choose(body))
+    return plan.summary()
 
 
 async def _generate_narrated(
     session: AsyncSession, body: VideoIn, selected: dict, user: User
 ) -> dict:
-    story, planned = await _plan_narrated(session, body, selected)
-    images = await photos.slideshow_images(session, story)
-    if not images and body.provider != "fake":
-        raise HTTPException(422, "Add a story photo before generating an AI video.")
+    story, plan = await _narrated_plan(session, body, selected)
+    image_bytes, image_hash = await _story_photo(session, story, body.provider)
     storage = get_storage()
-    image_bytes, image_hash = None, ""
-    if images:
-        if not storage.exists(images[0]):
-            raise HTTPException(422, "The story photo is missing. Choose another photo.")
-        image_bytes = await asyncio.to_thread(storage.path(images[0]).read_bytes)
-        image_hash = hashlib.sha256(image_bytes).hexdigest()
-    sound = await asyncio.to_thread(storage.path(planned.soundtrack_key).read_bytes)
+    sound = await asyncio.to_thread(storage.path(plan.soundtrack_key).read_bytes)
     direction = body.prompt.strip()
+    shots = narrated_video.new_shots(plan, story.title, story.place_name, direction)
     payload = {
         "mode": "narrated",
         "model": body.model,
@@ -152,61 +203,53 @@ async def _generate_narrated(
         "seed": body.seed if selected.get("supports_seed", True) else 0,
         "soundtrack": body.soundtrack,
         "subtitles": body.subtitles,
-        "rtl": planned.rtl,
-        "lines": narrated_video.payload_lines(planned),
-        "lines_total": planned.lines_total,
-        "seconds": planned.seconds,
+        "rtl": plan.rtl,
+        "lines": narrated_video.payload_lines(plan),
+        "lines_total": plan.lines_total,
+        "seconds": plan.seconds,
+        # So revoking the voice that read the soundtrack also removes this video.
+        "voice_clone_id": str(plan.voice_clone_id) if plan.voice_clone_id else None,
     }
-    digest = hashlib.sha256(
-        json.dumps(
-            [str(story.id), body.provider, payload, image_hash, hashlib.sha256(sound).hexdigest()],
-            sort_keys=True,
-        ).encode()
-    ).hexdigest()
-    existing = (
-        await session.execute(select(VideoGeneration).where(VideoGeneration.input_hash == digest))
-    ).scalar_one_or_none()
-    if existing:
+    # The shots' prompts carry the title, place and words, so a change to any of them is a
+    # new request.
+    digest = _digest(
+        str(story.id),
+        body.provider,
+        payload,
+        image_hash,
+        hashlib.sha256(sound).hexdigest(),
+        [shot["prompt"] for shot in shots],
+    )
+    if existing := await _existing(session, digest):
         return await output(session, existing)
     generation_id = uuid.uuid4()
     folder = f"stories/{story.id}/videos/{generation_id}"
     image_key = f"{folder}/input.webp" if image_bytes is not None else None
     if image_key:
         await asyncio.to_thread(storage.write_bytes, image_key, image_bytes)
-    # The soundtrack is copied: a revoked voice deletes its narrations, not this video's.
+    # The soundtrack is copied for the joining step; revoking its voice removes it too.
     payload["audio_key"] = f"{folder}/soundtrack.mp3"
     await asyncio.to_thread(storage.write_bytes, payload["audio_key"], sound)
-    shots = narrated_video.shot_states(planned, story.title, story.place_name, direction)
-    try:
-        job = await jobs.enqueue(
-            session,
-            narrated_video.KIND,
-            {
-                "generation_id": str(generation_id),
-                "deadline": narrated_video.deadline_for(len(shots)).isoformat(),
-            },
-            idempotency_key=f"{narrated_video.KIND}:{digest}",
-            max_attempts=1,
-            commit=False,
-        )
-        generation = VideoGeneration(
-            id=generation_id,
-            story_id=story.id,
-            actor_id=user.id,
-            provider=body.provider,
-            payload=payload,
-            image_key=image_key,
-            input_hash=digest,
-            job_id=job.id,
-            shots=shots,
-        )
-        session.add(generation)
-        await session.commit()
-    except IntegrityError:
-        await session.rollback()
-        storage.delete_tree(folder)
-        raise HTTPException(409, "This video was already queued. Refresh the job list.") from None
-    return await output(session, generation)
+    generation = VideoGeneration(
+        id=generation_id,
+        story_id=story.id,
+        actor_id=user.id,
+        provider=body.provider,
+        payload=payload,
+        image_key=image_key,
+        input_hash=digest,
+        shots=shots,
+    )
+    return await _record(
+        session,
+        generation,
+        narrated_video.KIND,
+        {
+            "generation_id": str(generation_id),
+            "deadline": narrated_video.deadline_for(len(shots)).isoformat(),
+        },
+        f"{narrated_video.KIND}:{digest}",
+    )
 
 
 @router.get("")
@@ -230,9 +273,7 @@ async def generate(
     selected = _choose(body)
     if body.mode == "narrated":
         return await _generate_narrated(session, body, selected, user)
-    story = await session.get(Story, body.story_id)
-    if not story:
-        raise HTTPException(404, "Story not found.")
+    story = await _story_or_404(session, body.story_id)
     layer = (
         await session.execute(
             select(TextLayer).where(TextLayer.story_id == story.id, TextLayer.kind == "polished")
@@ -243,61 +284,37 @@ async def generate(
         f"Heritage story: {story.title}. Place: {story.place_name}. {words}\n"
         f"Visual direction: {body.prompt.strip()}"
     )
-    images = await photos.slideshow_images(session, story)
-    if not images and body.provider != "fake":
-        raise HTTPException(422, "Add a story photo before generating an AI video.")
-    generation_id = uuid.uuid4()
+    image_bytes, image_hash = await _story_photo(session, story, body.provider)
     payload = {
         "model": body.model,
         "prompt": prompt,
         "aspect_ratio": body.aspect_ratio if selected.get("supports_aspect", True) else "source",
         "seed": body.seed if selected.get("supports_seed", True) else 0,
     }
-    image_hash = ""
-    image_key = None
-    if images:
-        storage = get_storage()
-        if not storage.exists(images[0]):
-            raise HTTPException(422, "The story photo is missing. Choose another photo.")
-        image_bytes = await asyncio.to_thread(storage.path(images[0]).read_bytes)
-        image_hash = hashlib.sha256(image_bytes).hexdigest()
-        image_key = f"stories/{story.id}/videos/{generation_id}/input.webp"
-    digest = hashlib.sha256(
-        json.dumps([str(story.id), body.provider, payload, image_hash], sort_keys=True).encode()
-    ).hexdigest()
-    existing = (
-        await session.execute(select(VideoGeneration).where(VideoGeneration.input_hash == digest))
-    ).scalar_one_or_none()
-    if existing:
+    digest = _digest(str(story.id), body.provider, payload, image_hash)
+    if existing := await _existing(session, digest):
         return await output(session, existing)
-    if image_key:
+    generation_id = uuid.uuid4()
+    image_key = None
+    if image_bytes is not None:
+        image_key = f"stories/{story.id}/videos/{generation_id}/input.webp"
         await asyncio.to_thread(get_storage().write_bytes, image_key, image_bytes)
-    try:
-        job = await jobs.enqueue(
-            session,
-            "generate_video",
-            {"generation_id": str(generation_id)},
-            idempotency_key=f"video:{digest}",
-            max_attempts=1,
-            commit=False,
-        )
-        generation = VideoGeneration(
-            id=generation_id,
-            story_id=story.id,
-            actor_id=user.id,
-            provider=body.provider,
-            payload=payload,
-            image_key=image_key,
-            input_hash=digest,
-            job_id=job.id,
-        )
-        session.add(generation)
-        await session.commit()
-    except IntegrityError:
-        await session.rollback()
-        get_storage().delete_tree(f"stories/{story.id}/videos/{generation_id}")
-        raise HTTPException(409, "This video was already queued. Refresh the job list.") from None
-    return await output(session, generation)
+    generation = VideoGeneration(
+        id=generation_id,
+        story_id=story.id,
+        actor_id=user.id,
+        provider=body.provider,
+        payload=payload,
+        image_key=image_key,
+        input_hash=digest,
+    )
+    return await _record(
+        session,
+        generation,
+        "generate_video",
+        {"generation_id": str(generation_id)},
+        f"video:{digest}",
+    )
 
 
 async def find_generation(session: AsyncSession, generation_id: uuid.UUID) -> VideoGeneration:
@@ -333,22 +350,35 @@ async def video_media(
     )
 
 
+class RetryIn(BaseModel):
+    # Submit an uncertain shot again: the provider may already have accepted (and billed) it.
+    confirm_resubmit: bool = False
+
+
 @router.post("/{generation_id}/retry", status_code=202)
 async def retry_video(
     generation_id: uuid.UUID,
+    body: RetryIn | None = None,
     user: User = Depends(staff),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Go on with a failed narrated video from where it stopped."""
     generation = await find_generation(session, generation_id)
     job = await session.get(Job, generation.job_id) if generation.job_id else None
-    if not narrated_video.retryable(generation, job):
+    confirm = bool(body and body.confirm_resubmit)
+    if not (
+        narrated_video.retryable(generation, job)
+        or (confirm and narrated_video.needs_confirmation(generation, job))
+    ):
         raise HTTPException(
             409,
-            "This video cannot be retried: it is not a failed narrated video, or a shot's "
-            "submission needs to be checked with the provider first.",
+            "This video cannot be retried as it is: it is not a failed narrated video, or a "
+            "shot's submission was never confirmed and must be confirmed before it is sent "
+            "again (it may be billed twice).",
         )
-    await narrated_video.retry(session, generation)
+    shots, estimate = narrated_video.retry_plan(generation, confirm)
+    await _ensure_room(generation.provider, estimate)
+    await narrated_video.queue_retry(session, generation, shots)
     await session.commit()
     return await output(session, generation)
 
@@ -444,7 +474,7 @@ async def _check(generation_id: uuid.UUID, number: int, deadline: datetime) -> d
 
     if status == "done":
         free = FreeVideoRead(name)
-        extension = ".webm" if name == "fake" else ".mp4"
+        extension = clip_extension(name)
 
         async def download(url: str = result.get("video_url", "")) -> tuple[dict, bytes]:
             return {}, await adapter.download(url)

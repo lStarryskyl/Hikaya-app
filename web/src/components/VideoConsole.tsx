@@ -59,7 +59,6 @@ export default function VideoConsole() {
         aspect_ratio: aspect,
         mode: 'narrated',
         soundtrack,
-        subtitles,
       }).then(
         (data) => {
           if (current) setPlan({ loading: false, data })
@@ -77,15 +76,27 @@ export default function VideoConsole() {
       current = false
       window.clearTimeout(timer)
     }
-  }, [narrated, storyId, selectedProvider, chosenModel, soundtrack, subtitles, aspect])
-  async function retry(id: string) {
+  }, [narrated, storyId, selectedProvider, chosenModel, soundtrack, aspect])
+  async function retry(id: string, confirmResubmit = false) {
     setError('')
     try {
-      await retryVideo(id)
+      await retryVideo(id, confirmResubmit)
       setRevision((r) => r + 1)
     } catch (e) {
       setError(e instanceof ApiError ? e.message : t('The video could not be retried.'))
     }
+  }
+  function resubmit(id: string, shot: number) {
+    // The provider may already have accepted (and billed) the unconfirmed shot.
+    if (
+      window.confirm(
+        message(
+          'Submit shot {shot} again? If the provider already accepted it, it may be billed twice.',
+          { shot },
+        ),
+      )
+    )
+      void retry(id, true)
   }
   useEffect(() => {
     if (!pending) return
@@ -287,7 +298,7 @@ export default function VideoConsole() {
                 ? t(plan.error)
                 : plan.data &&
                   message(
-                    'Shots: {shots} · Length: {length} · Lines covered: {lines} of {total} · About {usd} USD reserved',
+                    'Shots: {shots} · Length: {length} · Lines covered: {lines} of {total} · Estimated cost about {usd} USD',
                     {
                       shots: plan.data.shots.length,
                       length: formatLength(plan.data.seconds),
@@ -296,6 +307,13 @@ export default function VideoConsole() {
                       usd: plan.data.estimate_usd,
                     },
                   )}
+          </p>
+        )}
+        {narrated && storyId && !plan.loading && plan.data && !plan.data.english && (
+          <p role="status" className="text-sm text-gold sm:col-span-2">
+            {t(
+              'This story has no English translation of every line: shot prompts use the spoken text and subtitles have one line.',
+            )}
           </p>
         )}
         <button
@@ -333,6 +351,12 @@ export default function VideoConsole() {
             )}
             <p role="status" className="my-2 text-sm">
               {t(job.progress)} ·{' '}
+              {job.mode === 'narrated' && job.shot != null && (
+                <>
+                  {message('Shot {shot} of {shots}', { shot: job.shot, shots: job.shots ?? 0 })}{' '}
+                  ·{' '}
+                </>
+              )}
               {t(
                 job.status === 'done'
                   ? 'Complete'
@@ -355,6 +379,23 @@ export default function VideoConsole() {
               <p role="alert" className="text-sm text-terracotta-dark">
                 {t(job.error)}
               </p>
+            )}
+            {job.status === 'failed' && job.needs_confirmation && (
+              <div className="mt-2 space-y-2">
+                <p className="text-sm text-gold">
+                  {message(
+                    'The provider never confirmed shot {shot}. Check your provider account first: submitting it again may be billed twice.',
+                    { shot: job.shot ?? 0 },
+                  )}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => resubmit(job.id, job.shot ?? 0)}
+                  className="w-fit rounded-full border border-terracotta px-3 py-1 text-sm text-terracotta-dark"
+                >
+                  {t('Submit the shot again')}
+                </button>
+              </div>
             )}
             {job.status === 'failed' && job.retryable && (
               <button

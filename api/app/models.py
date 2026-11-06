@@ -614,6 +614,8 @@ class VideoGeneration(Base):
     file_key: Mapped[str | None] = mapped_column(Text)
     # A narrated video's shots, in order (app/narrated_video.py); empty for a single clip.
     shots: Mapped[list] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    # A narrated video's refined shot script (app/providers/script.py), once written.
+    script: Mapped[dict | None] = mapped_column(JSONB)
     progress: Mapped[str] = mapped_column(Text, nullable=False, server_default="Queued locally")
     job_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL")

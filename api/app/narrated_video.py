@@ -32,6 +32,15 @@ from app.handlers import handler
 from app.media import ffmpeg_inputs, narration_for, render
 from app.models import AssetKind, Job, JobStatus, Story, VideoGeneration
 from app.pipeline import get_layer
+from app.providers.script import (
+    LANGUAGES,
+    FakeScriptWriter,
+    Screenplay,
+    ScriptRequest,
+    ShotBrief,
+    screenwriter_prompt,
+    script_writer,
+)
 from app.providers.video import FreeVideoRead, VideoRejected, clip_extension, provider
 from app.storage import get_storage
 
@@ -47,6 +56,7 @@ SAFE_PATH = re.compile(r"^[A-Za-z0-9._/-]+$")
 
 # Progress is one of these fixed messages (the console translates them); the shot number is
 # reported beside it.
+WRITING_SCRIPT = "Writing the shot script"
 SUBMITTING = "Submitting a shot"
 RENDERING = "Rendering a shot"
 SHOT_READY = "Shot ready"
@@ -129,10 +139,27 @@ def plan_shots(
     return kept, shots
 
 
-def shot_prompt(index: int, count: int, title: str, place: str, words: str, direction: str) -> str:
-    """One shot's prompt: what is said during it, and how it continues the film. Each shot
-    gets one image: Omni reads a second image as the shot's last frame (seen live on
-    2026-11-06), so the people's look is carried by the opening frame and by this prompt."""
+def shot_prompt(
+    index: int,
+    count: int,
+    title: str,
+    place: str,
+    words: str,
+    direction: str,
+    *,
+    audio: str = "soundtrack",
+    scene: dict | None = None,
+    cast: str = "",
+    setting: str = "",
+    narrator: str = "",
+    spoken: str = "",
+    language: str = "",
+) -> str:
+    """One shot's prompt: what is said during it, how it continues the film and, from the
+    refined script, the cast, setting, action and camera. Each shot gets one image: Omni reads
+    a second image as the shot's last frame (seen live on 2026-11-06), so the people's look is
+    carried by the opening frame and by this prompt. With Omni's own voice, it also asks for a
+    voice-over of the shot's words over the scene's natural sounds."""
     continuity = (
         "Start from the provided photo."
         if index == 0
@@ -141,21 +168,42 @@ def shot_prompt(index: int, count: int, title: str, place: str, words: str, dire
         "with the same faces, hair and clothes as in that image, even when the scene moves to "
         "another place."
     )
-    return "\n".join(
-        [
-            f"Shot {index + 1} of {count} of one continuous short film for the heritage story "
-            f'"{title}" from {place or "Jordan"}.',
-            continuity,
-            f'The narrator is saying: "{words}" Show what these words describe.',
-            f"Visual direction: {direction}",
-            "No one speaks or moves their lips on camera; no text, captions or logos on screen.",
-        ]
-    )
+    parts = [
+        f"Shot {index + 1} of {count} of one continuous short film for the heritage story "
+        f'"{title}" from {place or "Jordan"}.',
+        continuity,
+    ]
+    if cast:
+        parts.append(f"The people, exactly the same in every shot: {cast}")
+    if setting:
+        parts.append(f"Setting: {setting}")
+    if scene:
+        parts.append(f"In this shot: {scene['action']} Camera: {scene['camera']}")
+    parts.append(f'The narrator is saying: "{words}" Show what these words describe.')
+    if audio == "omni":
+        sounds = (scene or {}).get("sound") or "the natural sounds of the scene"
+        voice = narrator or "a warm, calm voice"
+        tongue = language or "the story's own language"
+        parts.append(
+            f"Sound: an off-screen voice-over narrator ({voice}) says, clearly and unhurried, "
+            f'in {tongue}: "{spoken}". Under the voice, only {sounds}. No music.'
+        )
+    parts += [
+        f"Visual direction: {direction}",
+        "No one speaks or moves their lips on camera; no text, captions or logos on screen.",
+    ]
+    return "\n".join(parts)
 
 
-def _shot_words(lines: list[Line], shot: Shot) -> str:
-    words = " ".join((lines[i].english or lines[i].spoken).strip() for i in shot.lines)
+def _shot_words(lines: list[Line], indexes) -> str:
+    """What is said during a shot, in English when there is a translation."""
+    words = " ".join((lines[i].english or lines[i].spoken).strip() for i in indexes)
     return words.strip() or "A quiet pause in the story."
+
+
+def _spoken(lines: list[Line], indexes) -> str:
+    """What is said during a shot, in the story's own language."""
+    return " ".join(lines[i].spoken.strip() for i in indexes).strip()
 
 
 def _clean(text: str) -> str:
@@ -226,6 +274,8 @@ class StoryPlan:
     english: bool  # every line has an English translation (prompts and second subtitle line)
     voice_clone_id: uuid.UUID | None  # the cloned voice that read the narration, if any
     estimate: Decimal
+    language: str  # jordanian | msa | english
+    script: str  # who refines the shot script: fake | gemini
 
     @property
     def seconds(self) -> float:
@@ -247,14 +297,15 @@ class StoryPlan:
             "lines": len(self.lines),
             "lines_total": self.lines_total,
             "english": self.english,
+            "script": self.script,
         }
 
 
 async def _soundtrack(
     session, story: Story, kind: str
-) -> tuple[str, list[Line], bool, bool, uuid.UUID | None]:
-    """The soundtrack's file, its timed lines, whether they are right-to-left, whether every
-    line has an English translation, and the cloned voice that read it (if any)."""
+) -> tuple[str, list[Line], str, bool, uuid.UUID | None]:
+    """The soundtrack's file, its timed lines, their language, whether every line has an
+    English translation, and the cloned voice that read it (if any)."""
     clone_id = None
     if kind == "narration":
         found = await narration_for(session, story.id)
@@ -288,21 +339,57 @@ async def _soundtrack(
         )
         for i, s in enumerate(segments)
     ]
-    rtl = language != "english"
-    return key, lines, rtl, english is not None or not rtl, clone_id
+    return key, lines, language, english is not None or language == "english", clone_id
 
 
-async def plan_story(session, story: Story, provider_name: str, soundtrack: str) -> StoryPlan:
+def _script_request(
+    title: str, place: str, lines: list[Line], shots, direction: str, photo, language, audio
+) -> ScriptRequest:
+    return ScriptRequest(
+        title=title,
+        place=place,
+        story=" ".join((line.english or line.spoken).strip() for line in lines),
+        shots=[
+            ShotBrief((shot.end_ms - shot.start_ms) / 1000, _shot_words(lines, shot.lines))
+            for shot in shots
+        ],
+        direction=direction,
+        photo=photo,
+        spoken_language=language,
+        audio=audio,
+    )
+
+
+async def plan_story(
+    session, story: Story, provider_name: str, soundtrack: str, audio: str = "soundtrack"
+) -> StoryPlan:
     adapter = provider(provider_name)
     shortest, longest = adapter.shot_seconds
-    key, lines, rtl, english, clone_id = await _soundtrack(session, story, soundtrack)
+    key, lines, language, english, clone_id = await _soundtrack(session, story, soundtrack)
     kept, shots = plan_shots(
         lines, longest, get_settings().narrated_video_max_seconds, min_shot_seconds=shortest
     )
     estimate = sum(
         (adapter.estimate_usd("video_submit", shot.seconds) for shot in shots), Decimal(0)
     )
-    return StoryPlan(key, kept, len(lines), shots, rtl, english, clone_id, estimate)
+    writer = script_writer()
+    if writer.budget and writer.budget == adapter.budget:
+        request = _script_request(
+            story.title, story.place_name, kept, shots, "", None, language, audio
+        )
+        estimate += writer.estimate_usd("script", len(screenwriter_prompt(request)))
+    return StoryPlan(
+        key,
+        kept,
+        len(lines),
+        shots,
+        language != "english",
+        english,
+        clone_id,
+        estimate,
+        language,
+        get_settings().script_provider,
+    )
 
 
 # --- the stored state of each shot ---
@@ -350,8 +437,11 @@ def _store(generation: VideoGeneration, states: list[ShotState]) -> None:
     generation.shots = [asdict(state) for state in states]
 
 
-def new_shots(plan: StoryPlan, title: str, place: str, direction: str) -> list[dict]:
-    """The stored shots of a new narrated video."""
+def new_shots(
+    plan: StoryPlan, title: str, place: str, direction: str, audio: str = "soundtrack"
+) -> list[dict]:
+    """The stored shots of a new narrated video. Their prompts are rewritten from the refined
+    script once it is written (the first step of the video's jobs)."""
     count = len(plan.shots)
     return [
         asdict(
@@ -360,7 +450,17 @@ def new_shots(plan: StoryPlan, title: str, place: str, direction: str) -> list[d
                 shot.end_ms,
                 shot.seconds,
                 list(shot.lines),
-                shot_prompt(index, count, title, place, _shot_words(plan.lines, shot), direction),
+                shot_prompt(
+                    index,
+                    count,
+                    title,
+                    place,
+                    _shot_words(plan.lines, shot.lines),
+                    direction,
+                    audio=audio,
+                    spoken=_spoken(plan.lines, shot.lines),
+                    language=LANGUAGES.get(plan.language, plan.language),
+                ),
             )
         )
         for index, shot in enumerate(plan.shots)
@@ -503,7 +603,10 @@ async def narrated_step(payload: dict) -> dict:
             return {"stale": True}
         if generation.file_key:
             return {"file_key": generation.file_key}
-        states = _states(generation)
+        states, written = _states(generation), generation.script is not None
+    if not written:
+        # The refined shot script comes first: no shot is paid for before it exists.
+        states = await _write_script(generation_id)
     index = _current(states)
     if index is None:
         return await _join(generation_id)
@@ -525,6 +628,66 @@ async def narrated_step(payload: dict) -> dict:
             "Its request ID was saved for staff follow-up."
         )
     return await _queue_next_step(generation_id, deadline, get_settings().video_poll_seconds)
+
+
+async def _write_script(generation_id: uuid.UUID) -> list[ShotState]:
+    """Have the screenwriter refine the shot script (through the gateway: ledger and cache),
+    store it and rebuild every shot's prompt from it. Returns the updated shots."""
+    async with get_sessionmaker()() as session:
+        generation = await session.get(VideoGeneration, generation_id)
+        story = await session.get(Story, generation.story_id)
+        title, place = story.title, story.place_name
+        data, states, input_hash = generation.payload, _states(generation), generation.input_hash
+        image_key = generation.image_key
+        generation.progress = WRITING_SCRIPT
+        await session.commit()
+    lines = [Line(**line) for line in data["lines"]]
+    language, audio = data.get("language", "jordanian"), data.get("audio", "soundtrack")
+    photo = await asyncio.to_thread(get_storage().path(image_key).read_bytes) if image_key else None
+    request = _script_request(title, place, lines, states, data["prompt"], photo, language, audio)
+    writer = script_writer()
+
+    async def run() -> dict:
+        return (await writer.refine(request)).to_dict()
+
+    script = await gateway.call(
+        "script", writer, (input_hash, "script"), len(screenwriter_prompt(request)), run
+    )
+    screenplay = Screenplay.from_dict(script)
+    # The fake writer only repeats each shot's words, so its scenes add nothing to a prompt.
+    refined = not isinstance(writer, FakeScriptWriter)
+    count = len(states)
+    states = [
+        replace(
+            state,
+            prompt=shot_prompt(
+                i,
+                count,
+                title,
+                place,
+                _shot_words(lines, state.lines),
+                data["prompt"],
+                audio=audio,
+                scene=(
+                    {"action": scene.action, "camera": scene.camera, "sound": scene.sound}
+                    if refined
+                    else None
+                ),
+                cast=screenplay.cast,
+                setting=screenplay.setting,
+                narrator=screenplay.narrator,
+                spoken=_spoken(lines, state.lines),
+                language=LANGUAGES.get(language, language),
+            ),
+        )
+        for i, (state, scene) in enumerate(zip(states, screenplay.scenes, strict=True))
+    ]
+    async with get_sessionmaker()() as session:
+        generation = await session.get(VideoGeneration, generation_id)
+        _store(generation, states)
+        generation.script = {"provider": get_settings().script_provider, **script}
+        await session.commit()
+    return states
 
 
 async def _queue_next_step(generation_id: uuid.UUID, deadline: datetime, delay: float) -> dict:
@@ -665,11 +828,21 @@ async def _check(generation_id: uuid.UUID, index: int) -> str:
     return "done"
 
 
+async def _has_audio(path) -> bool:
+    process = await asyncio.create_subprocess_exec(
+        "ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index",
+        "-of", "csv=p=0", str(path),
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+    )  # fmt: skip
+    out, _ = await process.communicate()
+    return bool(out.strip())
+
+
 async def _join(generation_id: uuid.UUID) -> dict:
     """Join the shots' pictures, each cut or held to its planned length, hold the last frame
-    for the tail, lay the soundtrack on as the only sound (stopping at the last covered line)
-    and burn in the subtitles. The shots' own audio is never used: Omni always makes some,
-    voices included, and only the story's soundtrack may be heard."""
+    for the tail and burn in the subtitles. The sound is either the story's soundtrack alone
+    (stopping at the last covered line; Omni's own audio, voices included, is never used) or,
+    with Omni's own voice, the shots' own audio and nothing else."""
     async with get_sessionmaker()() as session:
         generation = await session.get(VideoGeneration, generation_id)
         states, data, name = _states(generation), generation.payload, generation.provider
@@ -685,8 +858,10 @@ async def _join(generation_id: uuid.UUID) -> dict:
     fade = min(VOICE_FADE_MS / 1000, voice_end)
     demuxer = DEMUXERS[clip_extension(name)]
     clips = [storage.path(state.file_key) for state in states]
+    omni_voice = data.get("audio") == "omni"
     inputs = [arg for clip in clips for arg in ffmpeg_inputs(demuxer, [clip])]
-    inputs += ffmpeg_inputs("mp3", [storage.path(data["audio_key"])])
+    if not omni_voice:
+        inputs += ffmpeg_inputs("mp3", [storage.path(data["audio_key"])])
     graph = []
     for i, state in enumerate(states):
         graph.append(
@@ -711,12 +886,25 @@ async def _join(generation_id: uuid.UUID) -> dict:
             raise RuntimeError("The media folder path has characters FFmpeg filters cannot take.")
         graph.append(f"[vheld]subtitles=filename={path}[vout]")
         video = "[vout]"
-    voice = len(states)
-    graph.append(
-        f"[{voice}:a]aformat=sample_rates=48000:channel_layouts=stereo,adelay={LEAD_MS}:all=1,"
-        f"atrim=duration={voice_end:.3f},afade=t=out:st={voice_end - fade:.3f}:d={fade:.3f},"
-        f"loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000,apad,atrim=duration={total:.3f}[aout]"
-    )
+    normalise = f"loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000,apad,atrim=duration={total:.3f}"
+    if omni_voice:
+        # Omni's own audio (its voice-over and the scene's sounds), each shot cut to its span.
+        for i, state in enumerate(states):
+            graph.append(
+                f"[{i}:a]aformat=sample_rates=48000:channel_layouts=stereo,apad,"
+                f"atrim=duration={state.span:.3f},asetpts=PTS-STARTPTS[a{i}]"
+                if await _has_audio(clips[i])
+                else f"anullsrc=r=48000:cl=stereo,atrim=duration={state.span:.3f}[a{i}]"
+            )
+        sounds = "".join(f"[a{i}]" for i in range(len(states)))
+        graph.append(f"{sounds}concat=n={len(states)}:v=0:a=1,{normalise}[aout]")
+    else:
+        # Only the story's soundtrack is heard: the shots' own audio is never used.
+        graph.append(
+            f"[{len(states)}:a]aformat=sample_rates=48000:channel_layouts=stereo,"
+            f"adelay={LEAD_MS}:all=1,atrim=duration={voice_end:.3f},"
+            f"afade=t=out:st={voice_end - fade:.3f}:d={fade:.3f},{normalise}[aout]"
+        )
     target = f"{folder}/result.mp4"
     await render(
         target,

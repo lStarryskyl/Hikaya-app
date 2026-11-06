@@ -44,6 +44,9 @@ class VideoIn(BaseModel):
     mode: Literal["clip", "narrated"] = "clip"
     soundtrack: Literal["narration", "recording"] = "narration"
     subtitles: bool = True
+    # The voice of a narrated video: the soundtrack (ElevenLabs narration or the recording)
+    # or Omni's own generated audio; NARRATED_VIDEO_AUDIO when not given.
+    audio: Literal["soundtrack", "omni"] | None = None
 
 
 async def output(session: AsyncSession, generation: VideoGeneration) -> dict:
@@ -68,6 +71,13 @@ async def output(session: AsyncSession, generation: VideoGeneration) -> dict:
         "retryable": narrated_video.retryable(generation, job),
         "needs_confirmation": narrated_video.needs_confirmation(generation, job),
         "shot": narrated_video.current_shot(generation),
+        "audio": generation.payload.get("audio") if generation.shots else None,
+        # The refined shot script, once written (the fake writer's echo of the words is not).
+        "script": (
+            generation.script
+            if generation.script and generation.script.get("provider") != "fake"
+            else None
+        ),
     }
 
 
@@ -78,6 +88,8 @@ async def config(user: User = Depends(staff)) -> dict:
         "default_provider": get_settings().video_provider,
         "providers": configurations(),
         "narrated_max_seconds": get_settings().narrated_video_max_seconds,
+        "narrated_audio": get_settings().narrated_video_audio,
+        "script_provider": get_settings().script_provider,
     }
 
 
@@ -156,6 +168,10 @@ async def _record(
     return await output(session, generation)
 
 
+def _audio(body: VideoIn) -> str:
+    return body.audio or get_settings().narrated_video_audio
+
+
 async def _narrated_plan(
     session: AsyncSession, body: VideoIn, selected: dict
 ) -> tuple[Story, narrated_video.StoryPlan]:
@@ -169,7 +185,9 @@ async def _narrated_plan(
         )
     story = await _story_or_404(session, body.story_id)
     try:
-        plan = await narrated_video.plan_story(session, story, body.provider, body.soundtrack)
+        plan = await narrated_video.plan_story(
+            session, story, body.provider, body.soundtrack, _audio(body)
+        )
     except UserFacingError as exc:
         raise HTTPException(422, str(exc)) from None
     await _ensure_room(body.provider, plan.estimate)
@@ -194,7 +212,8 @@ async def _generate_narrated(
     storage = get_storage()
     sound = await asyncio.to_thread(storage.path(plan.soundtrack_key).read_bytes)
     direction = body.prompt.strip()
-    shots = narrated_video.new_shots(plan, story.title, story.place_name, direction)
+    audio = _audio(body)
+    shots = narrated_video.new_shots(plan, story.title, story.place_name, direction, audio)
     payload = {
         "mode": "narrated",
         "model": body.model,
@@ -203,6 +222,8 @@ async def _generate_narrated(
         "seed": body.seed if selected.get("supports_seed", True) else 0,
         "soundtrack": body.soundtrack,
         "subtitles": body.subtitles,
+        "audio": audio,
+        "language": plan.language,
         "rtl": plan.rtl,
         "lines": narrated_video.payload_lines(plan),
         "lines_total": plan.lines_total,

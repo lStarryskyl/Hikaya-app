@@ -228,8 +228,12 @@ class FakeGoogle:
         refuse_submit: bool = False,
         unknown: set[str] | None = None,
         refuse_status: int | None = None,
+        script: dict | None = None,
     ):
         self.posts: list[dict] = []
+        self.script_posts: list[dict] = []
+        self.order: list[str] = []
+        self.script = script
         self.checks: dict[str, int] = {}
         self.lengths: dict[str, int] = {}
         self.fail = fail or set()
@@ -238,7 +242,19 @@ class FakeGoogle:
         self.refuse_status = refuse_status
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and not json.loads(request.content)["model"].startswith(
+            "gemini-omni"
+        ):
+            # The screenwriter (a Gemini text model) answers at once.
+            self.script_posts.append(json.loads(request.content))
+            self.order.append("script")
+            text = json.dumps(self.script)
+            steps = [{"type": "model_output", "content": [{"type": "text", "text": text}]}]
+            return httpx.Response(
+                200, json={"id": "v1_script", "status": "completed", "steps": steps}
+            )
         if request.method == "POST":
+            self.order.append("video")
             if self.refuse_submit:
                 return httpx.Response(503)
             if self.refuse_status:
@@ -762,3 +778,81 @@ async def test_without_an_english_translation_the_plan_says_so(
     shown = (await client.post("/api/v1/staff/videos/plan", json=narrated(story))).json()
     assert shown["english"] is False
     assert len(shown["shots"]) == 2
+
+
+SCRIPT_FOR_TWO = {
+    "cast": "The guide: a man in his fifties, grey moustache, dark robe, red keffiyeh.",
+    "setting": "The Siq at first light, walking towards the Treasury.",
+    "narrator": "A warm older Jordanian man.",
+    "shots": [
+        {
+            "action": "The guide walks into the Siq past the carved water channel.",
+            "camera": "Slow tracking shot behind him.",
+            "sound": "Sandals on stone, a light wind.",
+        },
+        {
+            "action": "He reaches the end of the Siq as the Treasury appears.",
+            "camera": "The camera rises over his shoulder.",
+            "sound": "Footsteps slowing on sand, distant birds.",
+        },
+    ],
+}
+
+
+async def test_a_refined_script_shapes_every_shot(
+    client, session, sessionmaker, monkeypatch, omni_live
+):
+    monkeypatch.setattr(omni_live, "script_provider", "gemini")
+    story = await story_with_soundtrack(client, session, sessionmaker, monkeypatch)
+    google = FakeGoogle(script=SCRIPT_FOR_TWO)
+    mock_http(monkeypatch, google)
+    shown = (await client.post("/api/v1/staff/videos/plan", json=narrated(story))).json()
+    assert shown["script"] == "gemini"
+    assert Decimal(shown["estimate_usd"]) > Decimal("1.68")  # the shots plus the script
+    generation_id = (await client.post("/api/v1/staff/videos", json=narrated(story))).json()["id"]
+    await drain(sessionmaker)
+    done = (await client.get(f"/api/v1/staff/videos/{generation_id}")).json()
+    assert done["status"] == "done", done
+    # The script is written once, before any shot is paid for.
+    assert google.order == ["script", "video", "video"]
+    (asked,) = google.script_posts
+    assert "Line 0." in asked["input"][-1]["text"] and "Line 4." in asked["input"][-1]["text"]
+    first, second = (post["input"][1]["text"] for post in google.posts)
+    for prompt, scene in zip((first, second), SCRIPT_FOR_TWO["shots"], strict=True):
+        assert SCRIPT_FOR_TWO["cast"] in prompt and SCRIPT_FOR_TWO["setting"] in prompt
+        assert scene["action"] in prompt and scene["camera"] in prompt
+    assert done["script"]["shots"][1]["action"] == SCRIPT_FOR_TWO["shots"][1]["action"]
+    assert len(await ledger(session, "gemini_script")) == 1
+
+
+async def test_omni_voice_keeps_the_shots_own_sound(
+    client, session, sessionmaker, monkeypatch, omni_live
+):
+    story = await story_with_soundtrack(client, session, sessionmaker, monkeypatch)
+    google = FakeGoogle()
+    mock_http(monkeypatch, google)
+    body = narrated(story, audio="omni")
+    generation_id = (await client.post("/api/v1/staff/videos", json=body)).json()["id"]
+    await drain(sessionmaker)
+    done = (await client.get(f"/api/v1/staff/videos/{generation_id}")).json()
+    assert (done["status"], done["audio"]) == ("done", "omni")
+    media = (await client.get(done["video_url"])).content
+    # Omni's own sound (the clips' 3 kHz tone) is kept; the ElevenLabs narration is not laid on.
+    assert band_loudness(media, 3000, 2.0, 16.0) > -40
+    assert band_loudness(media, 220, 2.0, 16.0) < -60
+    # Each shot asks Omni for a voice-over of its own words, in the story's language.
+    prompt = google.posts[0]["input"][1]["text"]
+    assert "voice-over" in prompt and "Jordanian Arabic" in prompt
+    assert "سطر 0." in prompt and "سطر 3." not in prompt
+
+
+async def test_the_default_voice_is_a_setting(
+    client, session, sessionmaker, monkeypatch, omni_live
+):
+    monkeypatch.setattr(omni_live, "narrated_video_audio", "omni")
+    story = await story_with_soundtrack(client, session, sessionmaker, monkeypatch)  # signs in
+    config = (await client.get("/api/v1/staff/videos/config")).json()
+    assert (config["narrated_audio"], config["script_provider"]) == ("omni", "fake")
+    mock_http(monkeypatch, FakeGoogle())
+    queued = (await client.post("/api/v1/staff/videos", json=narrated(story))).json()
+    assert queued["audio"] == "omni"

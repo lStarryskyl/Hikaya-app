@@ -10,13 +10,14 @@ import httpx
 
 from app.config import get_settings
 from app.errors import NotStarted, UserFacingError
+from app.providers import gemini
 from app.providers.video import VideoRejected, download_video, https_host, video_cost
 
 HIGGSFIELD_MODEL = "bytedance/seedance-2.5/image-to-video"
 VEO_MODEL = "veo-3.1-fast-generate-001"
 VEO_MODELS = [VEO_MODEL, "veo-3.1-generate-001"]
 OMNI_MODEL = "gemini-omni-1.2-flash"
-OMNI_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
+OMNI_URL = gemini.INTERACTIONS_URL
 # Interaction IDs look like "v1_..."; anything else is refused before it goes in a URL.
 OMNI_INTERACTION_ID = re.compile(r"^[A-Za-z0-9_-]{1,200}$")
 
@@ -233,10 +234,7 @@ class GeminiOmniVideo:
 
     @property
     def headers(self) -> dict:
-        key = get_settings().gemini_api_key
-        if not key:
-            raise NotStarted("The Gemini API key is not configured: set GEMINI_API_KEY.")
-        return {"x-goog-api-key": key}
+        return gemini.key_headers()
 
     async def submit(self, payload: dict) -> dict:
         headers = self.headers
@@ -267,7 +265,7 @@ class GeminiOmniVideo:
         }
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(OMNI_URL, headers=headers, json=body)
-        _omni_refusal(response)
+        gemini.raise_refusal(response, "Gemini Omni", paid_tier_only=True)
         # A server error may still have started a billed render: left uncertain, not retried.
         response.raise_for_status()
         interaction = response.json().get("id")
@@ -318,48 +316,6 @@ class GeminiOmniVideo:
     async def download(self, url: str) -> bytes:
         # Checks return the video inline (Google: GET on an interaction returns base64 data).
         return decode_data_url(url, "video/mp4")
-
-
-def _google_error_reasons(response: httpx.Response) -> set[str]:
-    """The `reason` codes in a Google error body, which the Interactions API sends either as
-    {"error": ...} or wrapped in a list."""
-    try:
-        body = response.json()
-    except ValueError:
-        return set()
-    errors = body if isinstance(body, list) else [body]
-    reasons = set()
-    for item in errors:
-        error = item.get("error") if isinstance(item, dict) else None
-        details = error.get("details") if isinstance(error, dict) else None
-        for detail in details if isinstance(details, list) else []:
-            if isinstance(detail, dict) and isinstance(detail.get("reason"), str):
-                reasons.add(detail["reason"])
-    return reasons
-
-
-def _omni_refusal(response: httpx.Response) -> None:
-    """A plain message for answers that mean Google refused the submission outright: nothing
-    was started, so nothing was billed."""
-    status = response.status_code
-    # Google answers a wrong key with 400 API_KEY_INVALID, not 401.
-    if status in (401, 403) or (
-        status == 400 and "API_KEY_INVALID" in _google_error_reasons(response)
-    ):
-        raise NotStarted(
-            "Google rejected the Gemini API key; check GEMINI_API_KEY "
-            "(Omni Flash needs a key on a paid-tier project)."
-        )
-    if status == 429:
-        raise NotStarted(
-            "Google refused the request for quota: Omni Flash needs a Gemini API key on the "
-            "paid tier, or the project's quota is used up."
-        )
-    if status in (400, 404):
-        raise NotStarted(
-            "Gemini Omni refused this request. The prompt or photo may be blocked, "
-            "or the model is not available to this key."
-        )
 
 
 class CogVideo:

@@ -1,6 +1,18 @@
 import { api } from './api'
 export type VideoMode = 'clip' | 'narrated'
 export type Soundtrack = 'narration' | 'recording'
+/** What is heard in a narrated video: the story's soundtrack (ElevenLabs narration or the
+ * storyteller's recording) or Omni's own generated voice and sounds. */
+export type VoiceSource = 'soundtrack' | 'omni'
+/** Who writes a narrated video's shot script. */
+export type ScriptProvider = 'fake' | 'gemini'
+/** A narrated video's refined shot script, once written. */
+export interface ShotScript {
+  cast: string
+  setting: string
+  narrator: string
+  shots: { action: string; camera: string; sound: string }[]
+}
 export interface VideoPromptPayload {
   story_id: string
   provider: string
@@ -11,6 +23,7 @@ export interface VideoPromptPayload {
   mode?: VideoMode
   soundtrack?: Soundtrack
   subtitles?: boolean
+  audio?: VoiceSource
 }
 /** What a narrated video will be, before anything is queued or paid for. */
 export interface NarratedPlanRequest {
@@ -20,6 +33,7 @@ export interface NarratedPlanRequest {
   aspect_ratio: '16:9' | '9:16'
   mode: 'narrated'
   soundtrack: Soundtrack
+  audio?: VoiceSource
 }
 export interface NarratedPlan {
   shots: { start_ms: number; end_ms: number; seconds: number; lines: number }[]
@@ -29,6 +43,7 @@ export interface NarratedPlan {
   lines_total: number
   /** False when not every line has an English translation: prompts use the spoken text. */
   english: boolean
+  script?: ScriptProvider
 }
 export interface VideoJobResult {
   id: string
@@ -49,6 +64,8 @@ export interface VideoJobResult {
   retryable?: boolean
   /** A shot's submission was never confirmed: submitting it again may be billed twice. */
   needs_confirmation?: boolean
+  audio?: VoiceSource
+  script?: ShotScript | null
 }
 export interface VideoConfig {
   enabled: boolean
@@ -65,6 +82,9 @@ export interface VideoConfig {
     max_shot_seconds?: number
   }[]
   narrated_max_seconds?: number
+  /** The default voice of a narrated video (server setting NARRATED_VIDEO_AUDIO). */
+  narrated_audio?: VoiceSource
+  script_provider?: ScriptProvider
 }
 export const getVideoConfig = () => api<VideoConfig>('/staff/videos/config')
 export const getVideoJobs = () => api<VideoJobResult[]>('/staff/videos')

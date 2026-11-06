@@ -67,6 +67,15 @@ class Settings(BaseSettings):
     gemini_omni_usd_per_second: float = Field(0.08, ge=0)
     # A narrated AI video lasts as long as its soundtrack, up to this many seconds.
     narrated_video_max_seconds: int = Field(60, ge=6, le=60)
+    # The default voice of a narrated video: the story's soundtrack (ElevenLabs narration or
+    # the recording) or Omni's own generated audio. Staff can switch it per video.
+    narrated_video_audio: str = Field("soundtrack", pattern=r"^(soundtrack|omni)$")
+    # Who refines a narrated video's shot script: fake (the story's words) or gemini (Gemini
+    # with GEMINI_API_KEY). Prices per million tokens, Gemini 3.8 Flash through 2026.
+    script_provider: str = Field("fake", pattern=r"^(fake|gemini)$")
+    gemini_script_model: str = "gemini-3.8-flash"
+    gemini_script_input_usd_per_million: float = Field(0.75, ge=0)
+    gemini_script_output_usd_per_million: float = Field(3.75, ge=0)
     custom_video_endpoint: str = ""
     custom_video_token: str = ""
     custom_video_estimate_usd: float = Field(0.0, ge=0)

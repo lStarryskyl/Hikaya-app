@@ -94,6 +94,15 @@ covered and estimated cost first). Offered for Gemini Omni Flash and the offline
 - Each shot is its own ledger entry. The whole estimate (and, on a retry, what is still to pay)
   must fit the caps before anything is queued. `POST /api/v1/staff/videos/<id>/retry` goes on
   from the failed shot; `{"confirm_resubmit": true}` sends an unconfirmed shot again.
+- Before the first shot, a screenwriter (`SCRIPT_PROVIDER=gemini`: Gemini 3.8 Flash with the
+  AI Studio key) refines the shot list into one coherent script: one route with no jumping back,
+  people and props set up before they are used, one fixed cast description, and per shot an
+  action, a camera move and its natural sounds. The shot prompts are built from it and the
+  staff page shows it. `fake` keeps the story's own words.
+- Voice (one switch on the staff page, default `NARRATED_VIDEO_AUDIO`): `soundtrack` keeps
+  only the story's narration or recording; `omni` keeps Omni's own audio, each shot asking for
+  a voice-over of its words in the story's language over the scene's sounds (Google evaluates
+  Omni in English only).
 - Live result (2026-11-06): a 53 s video of five shots (12/15/13/11/6 s) rendered in under six
   minutes for about 3.96 USD at Google's price.
 

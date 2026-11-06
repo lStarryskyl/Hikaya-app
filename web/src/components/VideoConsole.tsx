@@ -13,6 +13,7 @@ import {
   type NarratedPlan,
   type Soundtrack,
   type VideoMode,
+  type VoiceSource,
 } from '../videos'
 
 type PlanState = { loading: boolean; data?: NarratedPlan; error?: string }
@@ -34,6 +35,9 @@ export default function VideoConsole() {
   const [mode, setMode] = useState<VideoMode>('clip')
   const [soundtrack, setSoundtrack] = useState<Soundtrack>('narration')
   const [subtitles, setSubtitles] = useState(true)
+  // One switch for what is heard; the server setting NARRATED_VIDEO_AUDIO picks the default.
+  const [voice, setVoice] = useState<VoiceSource | ''>('')
+  const chosenVoice: VoiceSource = voice || configuration.data?.narrated_audio || 'soundtrack'
   const [plan, setPlan] = useState<PlanState>({ loading: false })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -59,6 +63,7 @@ export default function VideoConsole() {
         aspect_ratio: aspect,
         mode: 'narrated',
         soundtrack,
+        audio: chosenVoice,
       }).then(
         (data) => {
           if (current) setPlan({ loading: false, data })
@@ -76,7 +81,7 @@ export default function VideoConsole() {
       current = false
       window.clearTimeout(timer)
     }
-  }, [narrated, storyId, selectedProvider, chosenModel, soundtrack, aspect])
+  }, [narrated, storyId, selectedProvider, chosenModel, soundtrack, aspect, chosenVoice])
   async function retry(id: string, confirmResubmit = false) {
     setError('')
     try {
@@ -117,7 +122,7 @@ export default function VideoConsole() {
         aspect_ratio: aspect,
         seed: Number(seed),
         mode: narrated ? 'narrated' : 'clip',
-        ...(narrated ? { soundtrack, subtitles } : {}),
+        ...(narrated ? { soundtrack, subtitles, audio: chosenVoice } : {}),
       })
       setRevision((r) => r + 1)
     } catch (e) {
@@ -238,6 +243,44 @@ export default function VideoConsole() {
           )
         )}
         {narrated && (
+          <div className="text-sm sm:col-span-2">
+            <span id="voice-label">{t('Voice')}</span>
+            <div
+              role="group"
+              aria-labelledby="voice-label"
+              className="mt-1 flex w-fit overflow-hidden rounded-full border border-border"
+            >
+              {(['soundtrack', 'omni'] as const).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={chosenVoice === value}
+                  onClick={() => setVoice(value)}
+                  className={`px-4 py-2 ${
+                    chosenVoice === value ? 'bg-terracotta text-cream' : 'bg-panel text-ink'
+                  }`}
+                >
+                  {t(value === 'omni' ? "Omni's own voice" : 'ElevenLabs narration')}
+                </button>
+              ))}
+            </div>
+            {chosenVoice === 'omni' && (
+              <div className="mt-2 space-y-1 text-muted2">
+                <p>
+                  {t(
+                    "Omni speaks the story's words itself, with the scene's natural sounds. Google evaluates Omni in English only, so the Arabic voice may vary; subtitles are approximate.",
+                  )}
+                </p>
+                <p>
+                  {t(
+                    "In Omni's own voice, the soundtrack only sets the shot timing and subtitles.",
+                  )}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+        {narrated && (
           <label className="flex items-center gap-2 text-sm sm:col-span-2">
             <input
               type="checkbox"
@@ -309,6 +352,15 @@ export default function VideoConsole() {
                   )}
           </p>
         )}
+        {narrated && storyId && !plan.loading && plan.data?.script && (
+          <p className="text-sm text-muted2 sm:col-span-2">
+            {t(
+              plan.data.script === 'gemini'
+                ? 'Shot script: refined by Gemini for continuity'
+                : 'Shot script: follows the story text (set SCRIPT_PROVIDER=gemini on the server to refine it)',
+            )}
+          </p>
+        )}
         {narrated && storyId && !plan.loading && plan.data && !plan.data.english && (
           <p role="status" className="text-sm text-gold sm:col-span-2">
             {t(
@@ -347,6 +399,14 @@ export default function VideoConsole() {
                   shots: job.shots ?? 0,
                   length: formatLength(job.seconds ?? 0),
                 })}
+                {job.audio && (
+                  <>
+                    {' · '}
+                    {message('Voice: {voice}', {
+                      voice: t(job.audio === 'omni' ? "Omni's own voice" : 'ElevenLabs narration'),
+                    })}
+                  </>
+                )}
               </p>
             )}
             <p role="status" className="my-2 text-sm">
@@ -416,6 +476,44 @@ export default function VideoConsole() {
                 aria-label={t('Generated video preview')}
                 className="mt-3 max-h-96 w-full rounded-lg bg-black"
               />
+            )}
+            {job.script && (
+              <details className="mt-3 text-sm">
+                <summary>{t('Shot script')}</summary>
+                <dl className="mt-2 space-y-1">
+                  <div>
+                    <dt className="font-medium">{t('Cast')}</dt>
+                    <dd dir="auto">{job.script.cast}</dd>
+                  </div>
+                  <div>
+                    <dt className="font-medium">{t('Setting')}</dt>
+                    <dd dir="auto">{job.script.setting}</dd>
+                  </div>
+                  {job.audio === 'omni' && (
+                    <div>
+                      <dt className="font-medium">{t('Narrator')}</dt>
+                      <dd dir="auto">{job.script.narrator}</dd>
+                    </div>
+                  )}
+                </dl>
+                <ol className="mt-2 list-decimal space-y-2 ps-5">
+                  {job.script.shots.map((shot, index) => (
+                    <li key={`${index}-${shot.action}`}>
+                      <p dir="auto">{shot.action}</p>
+                      <p dir="auto" className="text-muted2">
+                        {message('Camera: {camera}', { camera: shot.camera })}
+                      </p>
+                      <p dir="auto" className="text-muted2">
+                        {job.audio === 'omni'
+                          ? message('Sound: {sound}', { sound: shot.sound })
+                          : message('Sound (for later sound design): {sound}', {
+                              sound: shot.sound,
+                            })}
+                      </p>
+                    </li>
+                  ))}
+                </ol>
+              </details>
             )}
             <details className="mt-3 text-sm">
               <summary>{t('Prompt sent to the provider')}</summary>

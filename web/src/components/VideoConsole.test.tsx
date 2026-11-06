@@ -4,7 +4,9 @@ import VideoConsole from './VideoConsole'
 
 type Call = { url: string; method: string; body: Record<string, unknown> | null }
 
-function stubApi(jobs: unknown[] = [], english = true) {
+type Defaults = { narrated_audio?: 'soundtrack' | 'omni'; script?: 'fake' | 'gemini' }
+
+function stubApi(jobs: unknown[] = [], english = true, defaults: Defaults = {}) {
   const calls: Call[] = []
   vi.stubGlobal(
     'fetch',
@@ -18,6 +20,8 @@ function stubApi(jobs: unknown[] = [], english = true) {
             enabled: true,
             default_provider: 'gemini_omni',
             narrated_max_seconds: 60,
+            narrated_audio: defaults.narrated_audio ?? 'soundtrack',
+            script_provider: defaults.script ?? 'fake',
             providers: [
               {
                 id: 'gemini_omni',
@@ -54,6 +58,7 @@ function stubApi(jobs: unknown[] = [], english = true) {
             lines: 14,
             lines_total: 15,
             english,
+            script: defaults.script ?? 'fake',
           }),
         )
       if (url.endsWith('/retry')) return Promise.resolve(Response.json({}, { status: 202 }))
@@ -210,4 +215,105 @@ it('says when shot prompts cannot be in English', async () => {
       'This story has no English translation of every line: shot prompts use the spoken text and subtitles have one line.',
     ),
   ).toBeInTheDocument()
+})
+
+async function chooseNarrated() {
+  await screen.findByRole('option', { name: 'Petra at dawn' })
+  fireEvent.change(screen.getByLabelText('Story'), { target: { value: 'story-1' } })
+  fireEvent.change(screen.getByLabelText('Video type'), { target: { value: 'narrated' } })
+}
+
+it('switches the voice with one toggle and sends it with the plan and the video', async () => {
+  const calls = stubApi()
+  render(<VideoConsole />)
+  await chooseNarrated()
+  const eleven = await screen.findByRole('button', { name: 'ElevenLabs narration' })
+  const omni = screen.getByRole('button', { name: "Omni's own voice" })
+  expect(eleven).toHaveAttribute('aria-pressed', 'true')
+  expect(omni).toHaveAttribute('aria-pressed', 'false')
+  expect(
+    await screen.findByText(
+      'Shot script: follows the story text (set SCRIPT_PROVIDER=gemini on the server to refine it)',
+    ),
+  ).toBeInTheDocument()
+  expect(calls.find((call) => call.url.endsWith('/plan'))?.body).toMatchObject({
+    audio: 'soundtrack',
+  })
+
+  fireEvent.click(omni)
+  expect(omni).toHaveAttribute('aria-pressed', 'true')
+  expect(eleven).toHaveAttribute('aria-pressed', 'false')
+  expect(screen.getByText(/Omni speaks the story's words itself/)).toBeInTheDocument()
+  await vi.waitFor(() =>
+    expect(calls.some((call) => call.url.endsWith('/plan') && call.body?.audio === 'omni')).toBe(
+      true,
+    ),
+  )
+  const submit = screen.getByRole('button', { name: 'Generate narrated video' })
+  await vi.waitFor(() => expect(submit).toBeEnabled())
+  fireEvent.click(submit)
+  await vi.waitFor(() =>
+    expect(calls.some((call) => call.method === 'POST' && call.url.endsWith('/staff/videos'))).toBe(
+      true,
+    ),
+  )
+  const queued = calls.find((call) => call.method === 'POST' && call.url.endsWith('/staff/videos'))
+  expect(queued?.body).toMatchObject({ mode: 'narrated', audio: 'omni' })
+})
+
+it('starts from the server default voice and names the screenwriter', async () => {
+  const calls = stubApi([], true, { narrated_audio: 'omni', script: 'gemini' })
+  render(<VideoConsole />)
+  await chooseNarrated()
+  expect(await screen.findByRole('button', { name: "Omni's own voice" })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  expect(
+    await screen.findByText('Shot script: refined by Gemini for continuity'),
+  ).toBeInTheDocument()
+  expect(calls.find((call) => call.url.endsWith('/plan'))?.body).toMatchObject({ audio: 'omni' })
+})
+
+it("shows a video's voice and its refined shot script", async () => {
+  stubApi([
+    failedNarrated({
+      status: 'done',
+      progress: 'Video ready',
+      error: null,
+      retryable: false,
+      shot: null,
+      shots: 2,
+      seconds: 42,
+      audio: 'soundtrack',
+      script: {
+        cast: 'The guide: a man in his fifties in a dark robe.',
+        setting: 'Old Amman stairway at dusk.',
+        narrator: 'A warm older voice.',
+        shots: [
+          {
+            action: 'The guide climbs the stairway.',
+            camera: 'Slow push-in.',
+            sound: 'Footsteps on stone.',
+          },
+          { action: 'He lights the lantern.', camera: 'Close-up.', sound: 'A match striking.' },
+        ],
+      },
+    }),
+  ])
+  render(<VideoConsole />)
+  expect(
+    await screen.findByText(
+      'Narrated video · Shots: 2 · Length: 0:42 · Voice: ElevenLabs narration',
+    ),
+  ).toBeInTheDocument()
+  expect(screen.getByText('Shot script')).toBeInTheDocument()
+  expect(screen.getByText('The guide: a man in his fifties in a dark robe.')).toBeInTheDocument()
+  expect(screen.getByText('The guide climbs the stairway.')).toBeInTheDocument()
+  expect(screen.getByText('Camera: Close-up.')).toBeInTheDocument()
+  expect(
+    screen.getByText('Sound (for later sound design): Footsteps on stone.'),
+  ).toBeInTheDocument()
+  // The narrator only matters when Omni speaks.
+  expect(screen.queryByText('Narrator')).not.toBeInTheDocument()
 })

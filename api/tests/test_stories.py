@@ -248,7 +248,7 @@ async def test_submitting_an_incomplete_story_lists_what_is_missing(client):
     r = await client.post(f"/api/v1/stories/{story['id']}/submit")
     assert r.status_code == 422
     detail = r.json()["detail"]
-    for missing in ("category", "place", "map pin", "language", "audio", "transcript"):
+    for missing in ("category", "place", "map pin", "language", "recording or text", "transcript"):
         assert missing in detail
 
 

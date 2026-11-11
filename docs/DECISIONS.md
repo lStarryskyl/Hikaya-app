@@ -99,6 +99,7 @@ Email and password. Sign-up creates a `member` with no email verification. Roles
 These exist on purpose while the build is in progress. Each closes with the ticket named.
 
 - Transcription, polishing, translation and narration use fake providers by default; the real ones arrive with #12, #13 and #14, and the defaults then return to ElevenLabs and Azure as above.
+- "Stories written as text" (below) is decided and its tests are written, but the code is not built yet: until it is, a story still needs a recording. The remaining steps are in `docs/handoff/text-stories.md`.
 
 ## Demo data
 
@@ -128,6 +129,7 @@ These exist on purpose while the build is in progress. Each closes with the tick
 ## Creating a story
 
 - Recording uses the browser's own recorder (WebM/Opus, Ogg/Opus or MP4/AAC, whichever the browser supports) and the page names the real format. Blocked, missing, busy or unsupported microphones each get a plain message, and uploading a file always remains possible.
+- Instead of a recording, the story can be written or pasted as text (see "Stories written as text" below).
 - Photos are optional: uploads (PNG, JPEG or WebP, up to 15 MB and 40 megapixels each, read by their content) are stored as WebP at three widths; members can also pick photos from a place gallery. Up to 12 photos, in an order the member sets; the first is the cover. Removing a gallery pick never deletes the shared place photo. The page reads the limits from the API, so they are set in one place.
 - The pin is set by clicking the map; typing a known place drops a starting pin there. The place name is free text.
 - Publishing needs agreement to the rights statement served by the API. The statement has a version; the story stores the version agreed to and when. Changing the wording means a new version.
@@ -285,3 +287,11 @@ AI persona chat, reels, the 360 viewer, analytics dashboards, the visit planner 
 - Browser verification caught and fixed lazy staff-module initialization, untranslated feed/player tabs, signup password labelling, and mobile RTL grid overflow. The mobile overflow assertion and axe scans remain regression checks.
 - Local setup and coverage limits are documented in `docs/BROWSER_TESTS.md`. Live paid services and physical microphone capture are outside the deterministic CI suite.
 - Final local verification: 228 backend tests, 11 frontend unit tests and 3 Chromium journeys pass, along with type checks, lint, formatting and the production build. The optional MapLibre bundle still produces Vite's chunk-size warning. Hosted CI has not been triggered.
+
+## Stories written as text
+
+- A member can write or paste the story, or load a plain-text file (`.txt`, UTF-8) into the box, instead of recording it. (Decided 2026-11-12 with the owner, who has transcripts ready.) A story needs a recording or text to be published; it no longer needs a recording.
+- The text becomes the original words as they are: there is nothing to transcribe, so that step is left out, and polishing, the translations, moderation, narration and the slideshow run as they do for a recording. Saving the text only stores it and queues the polishing job; no provider is called in the web request.
+- The text is split into lines at line breaks and at sentence ends (`.`, `!`, `?`, `؟`, `…`), and a line longer than 300 characters is split at a space, so narration, subtitles and video shots get readable lines. A story can be up to `MAX_STORY_TEXT_CHARS` (20,000 by default) characters; the page reads the limit from the API.
+- Written lines have no spoken timings. Each gets an estimated slot from its length (about 15 characters a second, at least 1.5 s), as the seeded stories do, which keeps lines distinct. The editor shows line numbers instead of times for a story without a recording, and the player follows the narration's own timings.
+- A story has one source at a time. Saving text removes the recording and every text made from it; uploading a recording replaces the text the same way and starts over from transcription. Changing the language of a written story keeps its words (with any edits) and polishes and translates them again in the new language. The language is chosen before the text is saved, since only recordings have language detection.

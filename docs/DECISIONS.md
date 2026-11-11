@@ -99,7 +99,6 @@ Email and password. Sign-up creates a `member` with no email verification. Roles
 These exist on purpose while the build is in progress. Each closes with the ticket named.
 
 - Transcription, polishing, translation and narration use fake providers by default; the real ones arrive with #12, #13 and #14, and the defaults then return to ElevenLabs and Azure as above.
-- "Stories written as text" (below) is decided and its tests are written, but the code is not built yet: until it is, a story still needs a recording. The remaining steps are in `docs/handoff/text-stories.md`.
 
 ## Demo data
 
@@ -295,3 +294,5 @@ AI persona chat, reels, the 360 viewer, analytics dashboards, the visit planner 
 - The text is split into lines at line breaks and at sentence ends (`.`, `!`, `?`, `؟`, `…`), and a line longer than 300 characters is split at a space, so narration, subtitles and video shots get readable lines. A story can be up to `MAX_STORY_TEXT_CHARS` (20,000 by default) characters; the page reads the limit from the API.
 - Written lines have no spoken timings. Each gets an estimated slot from its length (about 15 characters a second, at least 1.5 s), as the seeded stories do, which keeps lines distinct. The editor shows line numbers instead of times for a story without a recording, and the player follows the narration's own timings.
 - A story has one source at a time. Saving text removes the recording and every text made from it; uploading a recording replaces the text the same way and starts over from transcription. Changing the language of a written story keeps its words (with any edits) and polishes and translates them again in the new language. The language is chosen before the text is saved, since only recordings have language detection.
+- A job saving its result locks the story row before its step row, the order that saving text or a new recording takes (story, then steps and layers). Replacing a recording while its transcript was being saved used to deadlock, and Postgres could abort the member's request instead of the job.
+- Verified with the fake providers: `pytest` (436 passed, including 10 for written stories), ruff, and the web typecheck, lint, format check, 22 unit tests and build. In a real browser, the Playwright suite (6 journeys) covers the end-to-end checks. A member loads a `.txt` file of Arabic text with `؟`, sees 4 lines in the editor with the polished text and both translations, publishes, and plays the narration; text replaces a recording and a recording replaces text. Docker could not run in the build environment, so these ran against a local PostgreSQL 16 instead of `docker compose up`.

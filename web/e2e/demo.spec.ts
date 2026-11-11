@@ -193,7 +193,7 @@ test('a member records, publishes, finds and plays a story', async ({ page }) =>
   await expect(page).toHaveURL(/\/create$/)
 
   // Upload a recording; the fake providers transcribe, polish and translate it.
-  await page.getByLabel('Language you speak in the recording').selectOption('jordanian')
+  await page.getByLabel('Language of the story').selectOption('jordanian')
   await page
     .getByLabel('Upload an audio recording')
     .setInputFiles(path.resolve('e2e/fixtures/voice.wav'))
@@ -264,4 +264,114 @@ test('a member records, publishes, finds and plays a story', async ({ page }) =>
     )
     .toBe(true)
   await expect(page.locator('[aria-current="true"]').first()).toBeVisible()
+})
+
+async function signUpToCreate(page: import('@playwright/test').Page, name: string) {
+  await page.goto('/signup?next=%2Fcreate')
+  await page.getByLabel('Your name').fill(name)
+  await page.getByLabel('Email', { exact: true }).fill(`writer-${Date.now()}@example.com`)
+  await page.getByLabel('Password', { exact: true }).fill('e2e-only-member-password')
+  await page.getByRole('button', { name: 'Create account', exact: true }).click()
+  await expect(page).toHaveURL(/\/create$/)
+}
+
+test('a member writes a story as text, publishes it and hears the narration', async ({ page }) => {
+  const title = `The Lantern Man ${Date.now()}`
+  const story =
+    'كان سيدي يشعل الفانوس جنب الدرج الحجري كل مسا.\nوكل الحارة كانت تعرف إنه النهار خلص.\n\n' +
+    'هل تعرفون قصة الفانوس؟ هاي الحكايات لازم ما تضيع.'
+  await signUpToCreate(page, 'Story Writer')
+
+  // A .txt file goes into the box first, right to left for Arabic, before it is used.
+  await page.getByLabel('Language of the story').selectOption('jordanian')
+  await page.getByLabel('Load a .txt file').setInputFiles({
+    name: 'lantern.txt',
+    mimeType: 'text/plain',
+    buffer: Buffer.from(story, 'utf-8'),
+  })
+  const box = page.getByLabel('Write or paste your story')
+  await expect(box).toHaveValue(story)
+  await expect(box).toHaveAttribute('dir', 'rtl')
+  await page.getByRole('button', { name: 'Use this text' }).click()
+  await expect(page.getByText('Text saved · 4 lines')).toBeVisible()
+
+  // Nothing to transcribe: polishing and the translations run on the written lines.
+  const storyId: string = (await (await page.request.get('/api/v1/me/stories')).json())[0].id
+  const pipeline = async () =>
+    (await page.request.get(`/api/v1/stories/${storyId}/pipeline`)).json()
+  await expect.poll(async () => (await pipeline()).complete, { timeout: 60000 }).toBe(true)
+  expect((await pipeline()).steps.map((s: { step: string }) => s.step)).not.toContain('transcribe')
+  await page.getByRole('button', { name: 'Continue', exact: true }).click()
+  await expect(page.getByLabel('Original words, line 3')).toHaveValue('هل تعرفون قصة الفانوس؟')
+  for (const version of ['Polished', 'English', 'Modern Standard Arabic'])
+    await expect(page.getByRole('tab', { name: version })).toBeVisible()
+  await page.getByRole('tab', { name: 'English' }).click()
+  await expect(page.getByLabel('English, line 4')).toBeVisible()
+
+  // Publish as for a recording.
+  await page.getByRole('button', { name: 'Continue', exact: true }).click()
+  await page.getByRole('button', { name: 'Skip photos' }).click()
+  await page.getByLabel('Title').fill(title)
+  await page.getByLabel('Category').selectOption('folklore')
+  await page.getByLabel('Place').fill('Salt')
+  await page.locator('.maplibregl-canvas').click({ position: { x: 200, y: 110 } })
+  await expect(page.getByText(/Pinned at/)).toBeVisible()
+  await page.getByRole('checkbox').last().check()
+  await page.getByRole('button', { name: 'Publish story' }).click()
+  await expect(page).toHaveURL(new RegExp(`/story/${storyId}$`))
+  const read = async () => (await page.request.get(`/api/v1/stories/${storyId}`)).json()
+  await expect.poll(async () => (await read()).status, { timeout: 60000 }).toBe('published')
+  await expect.poll(async () => (await read()).narration, { timeout: 60000 }).toBeTruthy()
+  expect((await read()).audio).toBeNull()
+  expect((await read()).narration.segments).toHaveLength(4)
+
+  // The narration plays: a written story has no recording to choose instead.
+  await page.reload()
+  await expect(page.getByRole('heading', { name: title })).toBeVisible()
+  const narration = page.getByRole('radio', { name: 'Narration' })
+  if (await narration.count()) await narration.click()
+  await page.getByRole('button', { name: 'Play', exact: true }).click()
+  await expect
+    .poll(
+      () =>
+        page
+          .locator('audio')
+          .first()
+          .evaluate((element: HTMLAudioElement) => !element.paused && element.currentTime > 0.3),
+      { timeout: 15000 },
+    )
+    .toBe(true)
+})
+
+test('text replaces a recording and a recording replaces text', async ({ page }) => {
+  await signUpToCreate(page, 'Draft Writer')
+  await page.getByLabel('Language of the story').selectOption('jordanian')
+  const voice = path.resolve('e2e/fixtures/voice.wav')
+  await page.getByLabel('Upload an audio recording').setInputFiles(voice)
+  const storyId = async (): Promise<string> =>
+    (await (await page.request.get('/api/v1/me/stories')).json())[0]?.id
+  await expect.poll(storyId, { timeout: 30000 }).toBeTruthy()
+  const id = await storyId()
+  const read = async () => (await page.request.get(`/api/v1/stories/${id}`)).json()
+  await expect.poll(async () => (await read()).audio, { timeout: 30000 }).toBeTruthy()
+
+  await expect(page.getByText('Using this text replaces your recording.')).toBeVisible()
+  await page
+    .getByLabel('Write or paste your story')
+    .fill('Grandfather lit the lantern. We listened.')
+  await page.getByRole('button', { name: 'Use this text' }).click()
+  await expect(page.getByText('Text saved · 2 lines')).toBeVisible()
+  const written = await read()
+  expect(written.audio).toBeNull()
+  expect(
+    written.layers
+      .find((l: { kind: string }) => l.kind === 'verbatim')
+      .segments.map((s: { text: string }) => s.text),
+  ).toEqual(['Grandfather lit the lantern.', 'We listened.'])
+
+  await expect(page.getByText('A recording replaces the text you saved.')).toBeVisible()
+  await page.getByLabel('Upload an audio recording').setInputFiles(voice)
+  await expect.poll(async () => (await read()).audio, { timeout: 30000 }).toBeTruthy()
+  const steps = (await (await page.request.get(`/api/v1/stories/${id}/pipeline`)).json()).steps
+  expect(steps.map((s: { step: string }) => s.step)).toContain('transcribe')
 })

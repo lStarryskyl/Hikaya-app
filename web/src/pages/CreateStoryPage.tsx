@@ -253,8 +253,7 @@ export default function CreateStoryPage() {
   const textLimit = limits.data?.text_max_chars
   const overLimit = textLimit !== undefined && text.length > textLimit
   const canContinue =
-    (step === 1 &&
-      (!!draft?.audio || !!draft?.layers.some((l) => l.kind === 'verbatim'))) ||
+    (step === 1 && (!!draft?.audio || !!draft?.layers.some((l) => l.kind === 'verbatim'))) ||
     (step === 2 && hasTranscript(draft)) ||
     step === 3
 

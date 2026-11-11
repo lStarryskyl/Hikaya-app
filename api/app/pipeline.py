@@ -12,6 +12,7 @@ highlight the line being spoken in any language.
 import asyncio
 import hashlib
 import json
+import re
 import uuid
 from dataclasses import dataclass
 
@@ -65,6 +66,15 @@ WAITING = "waiting"  # a step that has not been queued yet
 MAX_SEGMENT_CHARS = 2000
 GENERIC_FAILURE = "Something went wrong in this step. Try again."
 
+# Stories written as text (docs/DECISIONS.md, "Stories written as text").
+MAX_LINE_CHARS = 300
+# A sentence ends at a stop followed by whitespace or the end of the paragraph, so "3.5" stays
+# whole; a closing quote or bracket right after the stop stays on its sentence.
+_SENTENCE = re.compile(r".+?(?:[.!?؟…]+[\"'”’»)\]]*(?=\s|$)|$)")
+# Written lines have no spoken timings: each gets a slot from its length.
+TEXT_CHARS_PER_SECOND = 15
+MIN_TEXT_LINE_MS = 1500
+
 
 class Misaligned(UserFacingError):
     def __init__(self) -> None:
@@ -76,6 +86,43 @@ class Misaligned(UserFacingError):
 def expected_steps(language: str | None) -> list[str]:
     targets = TARGETS.get(language or "", ())
     return ["transcribe", "polish", *(TARGET_STEP[t] for t in targets)]
+
+
+def _wrapped(line: str) -> list[str]:
+    """A line over MAX_LINE_CHARS split at the last space before the limit (or cut hard)."""
+    out = []
+    while len(line) > MAX_LINE_CHARS:
+        cut = line.rfind(" ", 0, MAX_LINE_CHARS + 1)
+        if cut <= 0:
+            cut = MAX_LINE_CHARS
+        out.append(line[:cut].strip())
+        line = line[cut:].strip()
+    if line:
+        out.append(line)
+    return out
+
+
+def lines_from_text(text: str) -> list[str]:
+    """Written text as lines: at line breaks and sentence ends, none longer than
+    MAX_LINE_CHARS, so narration, subtitles and video shots get readable lines."""
+    lines: list[str] = []
+    for paragraph in text.splitlines():
+        for match in _SENTENCE.finditer(paragraph):
+            sentence = match.group().strip()
+            if sentence:
+                lines += _wrapped(sentence)
+    return lines
+
+
+def _estimated_segments(lines: list[str]) -> list[dict]:
+    """Consecutive slots from each line's length. Starts are distinct: the transcript editor
+    tells lines apart by their start."""
+    segments, at = [], 0
+    for line in lines:
+        length = max(MIN_TEXT_LINE_MS, round(len(line) * 1000 / TEXT_CHARS_PER_SECOND))
+        segments.append({"start_ms": at, "end_ms": at + length, "text": line})
+        at += length
+    return segments
 
 
 def step_hash(*parts: str) -> str:
@@ -179,9 +226,20 @@ def _transcribe_hash(audio_digest: str, language: str | None) -> str:
 
 
 async def start(session: AsyncSession, story: Story) -> None:
-    """(Re)start from transcription if the recording or the language changed. Commits."""
+    """(Re)start from transcription if the recording or the language changed; for a story
+    written as text, polish its words again in a new language. Commits."""
     digest = await _audio_digest(story.id, session)
     if digest is None:
+        verbatim = await get_layer(session, story.id, VERBATIM)
+        transcribed = await session.get(PipelineStep, (story.id, "transcribe"))
+        if (
+            verbatim is not None
+            and transcribed is None
+            and story.original_language
+            and story.original_language != verbatim.language
+        ):
+            # A written story keeps its words, with any edits, in the new language.
+            await start_from_text(session, story, _texts(verbatim))
         return
     input_hash = _transcribe_hash(digest, story.original_language)
     row = await session.get(PipelineStep, (story.id, "transcribe"))
@@ -191,6 +249,24 @@ async def start(session: AsyncSession, story: Story) -> None:
     await session.execute(delete(TextLayer).where(TextLayer.story_id == story.id))
     await session.execute(delete(PipelineStep).where(PipelineStep.story_id == story.id))
     await queue_step(session, story.id, "transcribe", "transcribe", input_hash, digest=digest)
+    await session.commit()
+
+
+async def start_from_text(session: AsyncSession, story: Story, lines: list[str]) -> None:
+    """Make written lines the story's original words and queue polishing; there is nothing
+    to transcribe. Earlier text and steps go, as for a new recording. Commits."""
+    await session.execute(delete(TextLayer).where(TextLayer.story_id == story.id))
+    await session.execute(delete(PipelineStep).where(PipelineStep.story_id == story.id))
+    session.add(
+        TextLayer(
+            story_id=story.id,
+            kind=VERBATIM,
+            language=story.original_language,
+            segments=_estimated_segments(lines),
+        )
+    )
+    await session.flush()
+    await _queue_polish(session, story)
     await session.commit()
 
 
@@ -345,12 +421,13 @@ async def status(session: AsyncSession, story: Story) -> tuple[list[StepStatus],
             await session.execute(select(PipelineStep).where(PipelineStep.story_id == story.id))
         ).scalars()
     }
+    steps = expected_steps(story.original_language)
     if "transcribe" not in rows:
-        return [], False
-    out = [
-        await _step_status(session, step, rows.get(step))
-        for step in expected_steps(story.original_language)
-    ]
+        if "polish" not in rows:
+            return [], False
+        # Written as text: nothing was transcribed.
+        steps = [step for step in steps if step != "transcribe"]
+    out = [await _step_status(session, step, rows.get(step)) for step in steps]
     complete = all(s.status == JobStatus.DONE for s in out)
     # "complete" is about the text being ready, so the later steps do not count here.
     for step in LATER_STEPS:

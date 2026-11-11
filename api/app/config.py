@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     max_photos_per_story: int = 12
     # Refused before decoding, so a small file cannot expand into a huge image in memory.
     max_photo_megapixels: float = 40
+    # A story written or pasted as text, instead of a recording.
+    max_story_text_chars: int = Field(20_000, ge=100, le=200_000)
 
     # Worker behaviour
     worker_poll_seconds: float = 1.0

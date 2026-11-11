@@ -424,6 +424,7 @@ class UploadLimits(BaseModel):
     photo_types: list[str]
     photo_max_mb: float
     photos_per_story: int
+    text_max_chars: int
 
 
 @router.get("/limits", response_model=UploadLimits)
@@ -436,6 +437,7 @@ async def upload_limits() -> UploadLimits:
         photo_types=sorted(photos.IMAGE_TYPES),
         photo_max_mb=settings.max_photo_upload_mb,
         photos_per_story=settings.max_photos_per_story,
+        text_max_chars=settings.max_story_text_chars,
     )
 
 
@@ -553,8 +555,46 @@ async def upload_audio(
     return await to_out(session, story, private=True, viewer=user)
 
 
+class StoryText(BaseModel):
+    # A hard bound; the configured limit (MAX_STORY_TEXT_CHARS) is checked in the endpoint.
+    text: str = Field(max_length=200_000)
+
+
+@router.put("/{story_id}/text", response_model=StoryOut)
+async def set_text(
+    story_id: str,
+    body: StoryText,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+    storage: LocalStorage = Depends(get_storage),
+) -> StoryOut:
+    """The story written or pasted as text, instead of a recording: it becomes the original
+    words, and polishing is queued (no provider is called here). Replaces any recording."""
+    story = await _own_story(session, story_id, user)
+    _require_editable(story)
+    if story.original_language is None:
+        raise HTTPException(422, "Choose the language of the story first.")
+    limit = get_settings().max_story_text_chars
+    if len(body.text) > limit:
+        raise HTTPException(422, f"Stories can be up to {limit:,} characters long.")
+    lines = pipeline.lines_from_text(body.text)
+    if not lines:
+        raise HTTPException(422, "Write or paste the story first.")
+    # Lock the story so a recording uploaded at the same time cannot interleave with this.
+    await session.refresh(story, with_for_update=True)
+    old = await _audio_assets(session, story.id)
+    for asset in old.values():
+        await session.delete(asset)
+    story.duration_ms = None
+    await pipeline.start_from_text(session, story, lines)  # commits
+    # Old files go only after the database no longer points at them.
+    storage.delete(*(asset.storage_key for asset in old.values()))
+    await session.refresh(story)
+    return await to_out(session, story, private=True, viewer=user)
+
+
 def missing_for_publishing(
-    story: Story, has_audio: bool, has_transcript: bool, has_english: bool
+    story: Story, has_source: bool, has_transcript: bool, has_english: bool
 ) -> list[str]:
     checks = [
         ("title", bool(story.title)),
@@ -562,7 +602,7 @@ def missing_for_publishing(
         ("place", bool(story.place_name)),
         ("map pin", story.latitude is not None and story.longitude is not None),
         ("language", story.original_language is not None),
-        ("audio", has_audio),
+        ("recording or text", has_source),
         ("transcript (still being prepared)", has_transcript),
         ("English translation (still being prepared)", has_english),
     ]
@@ -581,7 +621,8 @@ async def submit_story(
     kinds = {layer.kind for layer in await pipeline.layers(session, story.id)}
     missing = missing_for_publishing(
         story,
-        bool(await _audio_assets(session, story.id)),
+        # A recording, or the story written as text.
+        bool(await _audio_assets(session, story.id)) or pipeline.VERBATIM in kinds,
         {pipeline.VERBATIM, pipeline.POLISHED} <= kinds,
         # Moderation also reads the English translation of an Arabic story.
         story.original_language == "english" or moderation.ENGLISH in kinds,

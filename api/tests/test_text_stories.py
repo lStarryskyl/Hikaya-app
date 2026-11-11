@@ -15,11 +15,7 @@ from app.storage import get_storage
 from tests.conftest import CONSENT
 from tests.test_pipeline import drain, get_story, layers_by_kind, sign_up, status, story_with_audio
 
-TEXT = (
-    "كان جدي يحكي لنا عن البتراء. كنا نجلس حول النار!\n"
-    "\n"
-    "هل تعرفون قصة الخزنة؟ سأحكيها لكم"
-)
+TEXT = "كان جدي يحكي لنا عن البتراء. كنا نجلس حول النار!\n\nهل تعرفون قصة الخزنة؟ سأحكيها لكم"
 TEXT_LINES = [
     "كان جدي يحكي لنا عن البتراء.",
     "كنا نجلس حول النار!",

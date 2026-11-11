@@ -244,6 +244,8 @@ export interface UploadLimits {
   photo_types: string[]
   photo_max_mb: number
   photos_per_story: number
+  /** The longest story that can be written or pasted as text, in characters. */
+  text_max_chars: number
 }
 
 let limitsRequest: Promise<UploadLimits> | null = null
@@ -266,6 +268,10 @@ export const reorderPhotos = (id: string, ids: string[]) =>
   api<StoryPhoto[]>(`/stories/${id}/photos/order`, { method: 'PUT', body: { ids } })
 export const deletePhoto = (id: string, photoId: string) =>
   api<void>(`/stories/${id}/photos/${photoId}`, { method: 'DELETE' })
+
+/** The story written or pasted as text instead of a recording; replaces any recording. */
+export const setStoryText = (id: string, text: string) =>
+  api<StoryRecord>(`/stories/${id}/text`, { method: 'PUT', body: { text } })
 
 export async function uploadAudio(id: string, file: Blob, filename: string): Promise<StoryRecord> {
   const form = new FormData()

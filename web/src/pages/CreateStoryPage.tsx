@@ -1,7 +1,7 @@
-import { t, useLocale, message } from '../i18n'
+import { t, useLocale, message, number } from '../i18n'
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowRight, Check, Cloud, Globe2, MapPin, Music } from 'lucide-react'
+import { ArrowRight, Check, Cloud, FileText, Globe2, MapPin, Music } from 'lucide-react'
 import { PillButton } from '../components/ui'
 import JordanMap from '../components/JordanMap'
 import PhotoPicker from '../components/PhotoPicker'
@@ -19,7 +19,10 @@ import {
   getLimits,
   getStory,
   hasTranscript,
+  setStoryText,
   submitStory,
+  textDirection,
+  textFont,
   updateStory,
   uploadAudio,
   type CategoryValue,
@@ -60,6 +63,11 @@ export default function CreateStoryPage() {
   const [publishing, setPublishing] = useState(false)
   const [publishError, setPublishError] = useState('')
   const audioInputRef = useRef<HTMLInputElement>(null)
+  // The story written or pasted as text, instead of a recording.
+  const [text, setText] = useState('')
+  const [savingText, setSavingText] = useState(false)
+  const [textError, setTextError] = useState('')
+  const textFileRef = useRef<HTMLInputElement>(null)
   const places = useApi(getPlaces, [])
   const consent = useApi(getConsent, [])
   const limits = useApi(getLimits, [])
@@ -96,6 +104,13 @@ export default function CreateStoryPage() {
         if (story.audio) {
           setAudioName('Your recording')
           setStep(2)
+        } else {
+          // A story written as text goes on from its lines, which are shown again in step 1.
+          const written = story.layers.find((l) => l.kind === 'verbatim')
+          if (written) {
+            setText(written.segments.map((s) => s.text).join('\n'))
+            setStep(2)
+          }
         }
       })
       .catch((e) => !cancelled && setResumeError(messageOf(e, 'That story could not be opened.')))
@@ -129,6 +144,41 @@ export default function CreateStoryPage() {
       setAudioError(messageOf(err, 'The upload failed. Please try again.'))
     } finally {
       setUploading(false)
+    }
+  }
+
+  async function sendText() {
+    setTextError('')
+    setSavingText(true)
+    try {
+      const story = await ensureDraft()
+      setDraft(story)
+      setDraft(await setStoryText(story.id, text))
+      setAudioName('')
+    } catch (err) {
+      setTextError(messageOf(err, 'The text could not be saved. Please try again.'))
+    } finally {
+      setSavingText(false)
+    }
+  }
+
+  /** A .txt file goes into the box first, so the member sees it before using it. */
+  async function loadTextFile(file: File) {
+    setTextError('')
+    const max = limits.data?.text_max_chars
+    // UTF-8 takes at most four bytes a character: a file far over that cannot fit.
+    if (max && file.size > max * 4) {
+      setTextError(
+        message('That file is too large: stories can be up to {max} characters.', {
+          max: number(max),
+        }),
+      )
+      return
+    }
+    try {
+      setText(await file.text())
+    } catch {
+      setTextError('That file could not be read as text.')
     }
   }
 
@@ -196,8 +246,17 @@ export default function CreateStoryPage() {
     )
   }
 
+  // Lines of a story written as text (no recording), once saved.
+  const writtenLines = draft?.audio
+    ? 0
+    : (draft?.layers.find((l) => l.kind === 'verbatim')?.segments.length ?? 0)
+  const textLimit = limits.data?.text_max_chars
+  const overLimit = textLimit !== undefined && text.length > textLimit
   const canContinue =
-    (step === 1 && !!draft?.audio) || (step === 2 && hasTranscript(draft)) || step === 3
+    (step === 1 &&
+      (!!draft?.audio || !!draft?.layers.some((l) => l.kind === 'verbatim'))) ||
+    (step === 2 && hasTranscript(draft)) ||
+    step === 3
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-14 text-center">
@@ -274,13 +333,13 @@ export default function CreateStoryPage() {
           </p>
 
           <label className="mx-auto mb-5 block max-w-xs text-start text-xs font-medium text-muted2">
-            {t('Language you speak in the recording')}
+            {t('Language of the story')}
             <select
               value={language}
               onChange={async (e) => {
                 const value = e.target.value as LanguageValue
                 setLanguage(value)
-                // Changing it after upload re-runs transcription in the right language.
+                // Changing it later re-runs transcription, or re-polishes written text.
                 if (draft) {
                   try {
                     setDraft(await updateStory(draft.id, { original_language: value }))
@@ -302,10 +361,13 @@ export default function CreateStoryPage() {
             </select>
           </label>
 
-          <Recorder onRecorded={(file) => void sendAudio(file)} disabled={!language || uploading} />
+          <Recorder
+            onRecorded={(file) => void sendAudio(file)}
+            disabled={!language || uploading || savingText}
+          />
           {!language && (
             <p className="mt-2 text-center text-[11px] text-muted">
-              {t('Choose the language first, then record or upload.')}
+              {t('Choose the language first, then record, upload or write.')}
             </p>
           )}
 
@@ -326,7 +388,7 @@ export default function CreateStoryPage() {
             <PillButton
               type="button"
               variant="outline"
-              disabled={uploading || !language}
+              disabled={uploading || savingText || !language}
               onClick={() => audioInputRef.current?.click()}
               className="disabled:opacity-60"
             >
@@ -350,12 +412,94 @@ export default function CreateStoryPage() {
                 <Check size={12} /> {audioName} · {formatDuration(draft.duration_ms)}
               </p>
             )}
+            {writtenLines > 0 && (
+              <p className="mt-2 text-[11px] text-muted">
+                {t('A recording replaces the text you saved.')}
+              </p>
+            )}
             {audioError && (
               <p
                 role="alert"
                 className="mt-3 rounded-lg bg-terracotta-light px-3 py-2 text-sm text-terracotta-dark"
               >
                 {t(audioError)}
+              </p>
+            )}
+          </div>
+
+          <div className="mt-4 rounded-xl2 border border-border bg-panel p-5 text-start">
+            <input
+              ref={textFileRef}
+              type="file"
+              accept=".txt,text/plain"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                e.target.value = ''
+                if (file) void loadTextFile(file)
+              }}
+              aria-label={t('Load a .txt file')}
+            />
+            <label htmlFor="story-text" className="block text-center text-sm text-ink2">
+              {t('Write or paste your story')}
+            </label>
+            <textarea
+              id="story-text"
+              {...(language ? textDirection(language) : {})}
+              value={text}
+              rows={8}
+              disabled={!language || savingText}
+              onChange={(e) => setText(e.target.value)}
+              placeholder={t('Type or paste the story here, in the language you chose.')}
+              className={`${fieldClass} resize-y leading-relaxed ${language ? textFont(language) : ''}`}
+            />
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+              <span
+                aria-live="polite"
+                className={`text-[11px] ${overLimit ? 'font-semibold text-terracotta-dark' : 'text-muted'}`}
+              >
+                {textLimit !== undefined &&
+                  message('{count} of {max} characters', {
+                    count: number(text.length),
+                    max: number(textLimit),
+                  })}
+              </span>
+              <div className="flex flex-wrap gap-2">
+                <PillButton
+                  type="button"
+                  variant="outline"
+                  disabled={!language || savingText}
+                  onClick={() => textFileRef.current?.click()}
+                  className="disabled:opacity-60"
+                >
+                  <FileText size={14} /> {t('Load a .txt file')}
+                </PillButton>
+                <PillButton
+                  type="button"
+                  disabled={!language || savingText || uploading || !text.trim() || overLimit}
+                  onClick={() => void sendText()}
+                  className="disabled:opacity-60"
+                >
+                  {savingText ? t('Saving…') : t('Use this text')}
+                </PillButton>
+              </div>
+            </div>
+            {draft?.audio && (
+              <p className="mt-2 text-[11px] text-muted">
+                {t('Using this text replaces your recording.')}
+              </p>
+            )}
+            {writtenLines > 0 && (
+              <p className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-teal-light px-3 py-1 text-xs font-medium text-teal">
+                <Check size={12} /> {message('Text saved · {lines} lines', { lines: writtenLines })}
+              </p>
+            )}
+            {textError && (
+              <p
+                role="alert"
+                className="mt-3 rounded-lg bg-terracotta-light px-3 py-2 text-sm text-terracotta-dark"
+              >
+                {t(textError)}
               </p>
             )}
           </div>

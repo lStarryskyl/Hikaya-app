@@ -219,7 +219,8 @@ export default function TranscriptEditor({
                 {layer.segments.map((seg, i) => (
                   <label key={seg.start_ms} className="flex items-start gap-3">
                     <span className="mt-2 w-10 shrink-0 font-mono text-[10px] text-terracotta">
-                      {timestamp(seg.start_ms)}
+                      {/* A story written as text has no spoken timings: number its lines. */}
+                      {story?.audio ? timestamp(seg.start_ms) : i + 1}
                     </span>
                     <textarea
                       {...textDirection(layer.language)}

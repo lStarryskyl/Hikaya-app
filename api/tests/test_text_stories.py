@@ -1,5 +1,6 @@
 """Stories written or pasted as text: no recording, so nothing to transcribe."""
 
+import asyncio
 import subprocess
 import uuid
 from pathlib import Path
@@ -7,8 +8,9 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select
 
+from app import pipeline
 from app.config import get_settings
-from app.models import Asset
+from app.models import Asset, Job, PipelineStep
 from app.pipeline import lines_from_text
 from app.providers import fake
 from app.storage import get_storage
@@ -197,6 +199,32 @@ async def test_text_replaces_a_recording_and_a_recording_replaces_text(
     assert r.json()["layers"] == []  # starts over from transcription
     steps, _ = await status(client, story_id)
     assert steps["transcribe"]["status"] == "queued"
+
+
+async def test_text_waits_for_a_transcript_being_saved_instead_of_deadlocking(
+    client, sessionmaker, tone
+):
+    """A worker saving a transcript and a member replacing the recording with text take
+    their locks in the same order, so one waits for the other."""
+    await sign_up(client)
+    story_id = await story_with_audio(client, tone)
+    async with sessionmaker() as worker:
+        row = await worker.get(PipelineStep, (uuid.UUID(story_id), "transcribe"))
+        payload = (await worker.get(Job, row.job_id)).payload
+        # The worker has its transcript and is about to save it.
+        assert await pipeline.is_current(worker, payload, lock=True)
+        request = asyncio.create_task(put_text(client, story_id, TEXT))
+        await asyncio.sleep(0.5)  # the member's request reaches the story's locks
+        await pipeline._save_layer(
+            worker, uuid.UUID(story_id), "verbatim", "jordanian", [
+                {"start_ms": 0, "end_ms": 1000, "text": "from the recording"}
+            ],
+        )  # fmt: skip
+        await worker.commit()
+    r = await asyncio.wait_for(request, timeout=10)
+    assert r.status_code == 200, r.text
+    verbatim = layers_by_kind(r.json())["verbatim"]
+    assert [s["text"] for s in verbatim["segments"]] == TEXT_LINES  # the newer source wins
 
 
 # --- rules ---

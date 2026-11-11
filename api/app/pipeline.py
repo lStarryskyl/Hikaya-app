@@ -198,6 +198,14 @@ async def queue_step(
 async def is_current(session: AsyncSession, payload: dict, *, lock: bool = False) -> bool:
     """Is this job's input still the step's input? With lock, holds the step row until commit,
     so the input cannot change between this check and saving the result."""
+    if lock:
+        # The story row first, as a new recording or text does (it locks the story, then
+        # deletes steps and layers): the same order on both sides, so one waits, never both.
+        await session.execute(
+            select(Story.id)
+            .where(Story.id == uuid.UUID(payload["story_id"]))
+            .with_for_update(key_share=True)
+        )
     row = await session.get(
         PipelineStep,
         (uuid.UUID(payload["story_id"]), payload["step"]),

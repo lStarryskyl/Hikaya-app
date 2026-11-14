@@ -16,7 +16,17 @@ from pydantic import BaseModel, Field, StringConstraints, field_validator
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import audio, billing, consent, media, moderation, photos, pipeline, places
+from app import (
+    audio,
+    billing,
+    consent,
+    media,
+    moderation,
+    narrated_video,
+    photos,
+    pipeline,
+    places,
+)
 from app.auth import current_user, current_user_optional
 from app.config import get_settings
 from app.db import get_session
@@ -102,6 +112,13 @@ class MediaOut(BaseModel):
     content_type: str
 
 
+class CaptionOut(BaseModel):
+    start_ms: int
+    end_ms: int
+    text: str
+    english: str | None = None
+
+
 class StoryVideoOut(BaseModel):
     """The narrated video staff show on the story's page, to everyone (made by AI from the
     story's own words). `voice` is what is heard: the storyteller's recording, the narration,
@@ -110,6 +127,8 @@ class StoryVideoOut(BaseModel):
     url: str
     voice: str  # recording | narration | omni
     narrated_by: str | None = None  # a consenting cloned voice reading the narration
+    # The lines heard, in video time, with their English (also drawn on the picture).
+    captions: list[CaptionOut] = []
 
 
 class AiVideoOut(BaseModel):
@@ -363,6 +382,16 @@ async def video_out(session: AsyncSession, story: Story) -> StoryVideoOut | None
         url=f"/api/v1/stories/{story.id}/video?v={generation.id.hex[:12]}",
         voice=voice,
         narrated_by=clone.speaker_name if clone and voice == "narration" else None,
+        # The picture starts LEAD_MS before the soundtrack the lines are timed against.
+        captions=[
+            CaptionOut(
+                start_ms=line["start_ms"] + narrated_video.LEAD_MS,
+                end_ms=line["end_ms"] + narrated_video.LEAD_MS,
+                text=line["spoken"],
+                english=line.get("english"),
+            )
+            for line in payload.get("lines", [])
+        ],
     )
 
 

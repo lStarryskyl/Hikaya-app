@@ -60,6 +60,17 @@ export interface StoryPhoto {
   photo: Photo
 }
 
+/** The video story staff show on a story's page, to everyone: made by AI from the story's
+ * own words; `voice` is what is heard. */
+export interface StoryVideo {
+  url: string
+  voice: 'recording' | 'narration' | 'omni'
+  /** A consenting cloned voice reading the narration. */
+  narrated_by?: string | null
+  /** The lines heard, in video time (also drawn on the picture), with their English. */
+  captions: { start_ms: number; end_ms: number; text: string; english?: string | null }[]
+}
+
 export interface ConsentStatement {
   version: string
   text: string
@@ -100,6 +111,8 @@ export interface StoryRecord {
     locked: boolean
     video_url: string | null
   } | null
+  /** The video story shown on the page, to everyone. */
+  video?: StoryVideo | null
   /** The cloned voice chosen to narrate it (author and staff only). */
   narrator_voice_id?: string | null
   /** Only for the author and staff. */
@@ -268,6 +281,17 @@ export const reorderPhotos = (id: string, ids: string[]) =>
   api<StoryPhoto[]>(`/stories/${id}/photos/order`, { method: 'PUT', body: { ids } })
 export const deletePhoto = (id: string, photoId: string) =>
   api<void>(`/stories/${id}/photos/${photoId}`, { method: 'DELETE' })
+
+/** Staff: the photos of a submitted story that is not their own, published pages included. */
+export function staffAddPhoto(id: string, file: File) {
+  const form = new FormData()
+  form.append('file', file, file.name)
+  return api<StoryPhoto>(`/staff/stories/${id}/photos`, { method: 'POST', form })
+}
+export const staffReorderPhotos = (id: string, ids: string[]) =>
+  api<StoryPhoto[]>(`/staff/stories/${id}/photos/order`, { method: 'PUT', body: { ids } })
+export const staffDeletePhoto = (id: string, photoId: string) =>
+  api<void>(`/staff/stories/${id}/photos/${photoId}`, { method: 'DELETE' })
 
 /** The story written or pasted as text instead of a recording; replaces any recording. */
 export const setStoryText = (id: string, text: string) =>

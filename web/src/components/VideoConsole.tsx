@@ -10,11 +10,14 @@ import {
   getVideoJobs,
   planVideo,
   retryVideo,
+  showStoryVideo,
   type NarratedPlan,
   type Soundtrack,
+  type VideoJobResult,
   type VideoMode,
   type VoiceSource,
 } from '../videos'
+import StaffStoryPhotos from './StaffStoryPhotos'
 
 type PlanState = { loading: boolean; data?: NarratedPlan; error?: string }
 
@@ -89,6 +92,16 @@ export default function VideoConsole() {
       setRevision((r) => r + 1)
     } catch (e) {
       setError(e instanceof ApiError ? e.message : t('The video could not be retried.'))
+    }
+  }
+  /** Show a finished narrated video on its story's page, to everyone, or take it off. */
+  async function setShown(job: VideoJobResult, show: boolean) {
+    setError('')
+    try {
+      await showStoryVideo(job.story_id, show ? job.id : null)
+      setRevision((r) => r + 1)
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : t('The story page could not be changed.'))
     }
   }
   function resubmit(id: string, shot: number) {
@@ -384,6 +397,7 @@ export default function VideoConsole() {
           )}
         </button>
       </form>
+      {storyId && <StaffStoryPhotos key={storyId} storyId={storyId} />}
       {(error || configuration.error || stories.error || jobs.error) && (
         <p role="alert" className="mt-4 text-sm text-terracotta-dark">
           {t(error || configuration.error || stories.error || jobs.error)}
@@ -476,6 +490,30 @@ export default function VideoConsole() {
                 aria-label={t('Generated video preview')}
                 className="mt-3 max-h-96 w-full rounded-lg bg-black"
               />
+            )}
+            {job.mode === 'narrated' && job.status === 'done' && job.video_url && (
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+                {job.shown ? (
+                  <>
+                    <span className="font-medium text-ink2">{t('Shown on the story page')}</span>
+                    <button
+                      type="button"
+                      onClick={() => void setShown(job, false)}
+                      className="w-fit rounded-full border border-border px-3 py-1 text-muted2"
+                    >
+                      {t('Take it off the story page')}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void setShown(job, true)}
+                    className="w-fit rounded-full border border-terracotta px-3 py-1 text-terracotta-dark"
+                  >
+                    {t('Show on the story page')}
+                  </button>
+                )}
+              </div>
             )}
             {job.script && (
               <details className="mt-3 text-sm">

@@ -72,6 +72,9 @@ async def output(session: AsyncSession, generation: VideoGeneration) -> dict:
         "needs_confirmation": narrated_video.needs_confirmation(generation, job),
         "shot": narrated_video.current_shot(generation),
         "audio": generation.payload.get("audio") if generation.shots else None,
+        # Whether this is the video the story's page shows to everyone.
+        "shown": (story := await session.get(Story, generation.story_id)) is not None
+        and story.featured_video_id == generation.id,
         # The refined shot script, once written (the fake writer's echo of the words is not).
         "script": (
             generation.script

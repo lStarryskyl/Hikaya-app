@@ -375,3 +375,90 @@ test('text replaces a recording and a recording replaces text', async ({ page })
   const steps = (await (await page.request.get(`/api/v1/stories/${id}/pipeline`)).json()).steps
   expect(steps.map((s: { step: string }) => s.step)).toContain('transcribe')
 })
+
+test('staff add photos to a published story and show its video story to everyone', async ({
+  page,
+  browser,
+}) => {
+  // A member's published story with a narration (made through the API, as the browser would).
+  const title = `A magazine, forty years later ${Date.now()}`
+  const api = page.request
+  const signup = await api.post('/api/v1/auth/signup', {
+    data: {
+      email: `kiosk-${Date.now()}@example.com`,
+      password: 'e2e-only-member-password',
+      display_name: 'Kiosk Keeper',
+    },
+  })
+  expect(signup.status()).toBe(201)
+  const storyId: string = (
+    await (await api.post('/api/v1/stories', { data: { original_language: 'jordanian' } })).json()
+  ).id
+  await api.patch(`/api/v1/stories/${storyId}`, {
+    data: {
+      title,
+      category: 'personal',
+      place_name: 'Downtown Amman',
+      latitude: 31.952,
+      longitude: 35.933,
+    },
+  })
+  await api.put(`/api/v1/stories/${storyId}/text`, {
+    data: { text: 'جاني واحد بعد أربعين سنة.\nقال لي: هاي حق المجلة.' },
+  })
+  const stepsDone = async (names: string[]) => {
+    const steps = (await (await api.get(`/api/v1/stories/${storyId}/pipeline`)).json()).steps
+    return names.every((n) =>
+      steps.some((s: { step: string; status: string }) => s.step === n && s.status === 'done'),
+    )
+  }
+  await expect.poll(() => stepsDone(['polish', 'translate_en']), { timeout: 30_000 }).toBe(true)
+  const version = (await (await api.get('/api/v1/stories/consent')).json()).version
+  await api.post(`/api/v1/stories/${storyId}/submit`, {
+    data: { consent: true, consent_version: version },
+  })
+  await expect
+    .poll(
+      async () => Boolean((await (await api.get(`/api/v1/stories/${storyId}`)).json()).narration),
+      {
+        timeout: 30_000,
+      },
+    )
+    .toBe(true)
+
+  // Staff: photos on the published story, then a narrated video shown on its page.
+  await api.post('/api/v1/auth/logout')
+  await page.goto('/signin')
+  await page.getByLabel('Email', { exact: true }).fill('staff-e2e@example.com')
+  await page.getByLabel('Password', { exact: true }).fill('e2e-only-staff-password')
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+  await page.getByRole('link', { name: 'Staff Review', exact: true }).click()
+  await page.getByRole('combobox', { name: 'Story', exact: true }).selectOption({ label: title })
+  const panel = page.getByRole('region', { name: 'Photos on the story page' })
+  await panel
+    .getByLabel('Upload photos')
+    .setInputFiles(path.resolve('../api/seed/places/petra-treasury.png'))
+  await expect(panel.getByRole('img', { name: 'Photo 1' })).toBeVisible()
+
+  await page.getByRole('combobox', { name: 'Video provider', exact: true }).selectOption('fake')
+  await page.getByRole('combobox', { name: 'Video type', exact: true }).selectOption('narrated')
+  const direction = `The kiosk at noon, books in the sun. Demo ${Date.now()}`
+  await page.getByLabel('Visual direction').fill(direction)
+  await page.getByRole('button', { name: 'Generate narrated video' }).click()
+  const job = page.getByRole('article').filter({ hasText: direction })
+  await job.getByRole('button', { name: 'Show on the story page' }).click({ timeout: 60_000 })
+  await expect(job.getByText('Shown on the story page')).toBeVisible()
+
+  // Anyone, signed out: the photos first, then the video story.
+  const visitor = await browser.newPage()
+  await visitor.goto(`/story/${storyId}`)
+  await expect(visitor.getByText('Photos', { exact: true })).toBeVisible()
+  const video = visitor.getByLabel(`Video story: ${title}`)
+  await expect(video).toHaveAttribute('src', new RegExp(`/api/v1/stories/${storyId}/video`))
+  await expect(
+    visitor.getByText('Made with AI from the words of this story.', { exact: false }),
+  ).toBeVisible()
+  const played = await visitor.request.get((await video.getAttribute('src')) ?? '')
+  expect(played.headers()['content-type']).toBe('video/mp4')
+  await visitor.close()
+})

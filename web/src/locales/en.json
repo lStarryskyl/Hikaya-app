@@ -593,5 +593,16 @@
   "common.that_file_could_not_be_read_as_text": "That file could not be read as text.",
   "common.that_file_is_too_large_stories_can_be_up_to_max_characters": "That file is too large: stories can be up to {max} characters.",
   "common.choose_the_language_of_the_story_first": "Choose the language of the story first.",
-  "common.write_or_paste_the_story_first": "Write or paste the story first."
+  "common.write_or_paste_the_story_first": "Write or paste the story first.",
+  "common.photos_on_the_story_page": "Photos on the story page",
+  "common.visitors_browse_these_before_the_video_story_the_first_one_opens_a_new_video": "Visitors browse these before the video story. The first one opens a new video.",
+  "common.the_story_page_could_not_be_changed": "The story page could not be changed.",
+  "common.shown_on_the_story_page": "Shown on the story page",
+  "common.take_it_off_the_story_page": "Take it off the story page",
+  "common.show_on_the_story_page": "Show on the story page",
+  "common.video_story": "Video story",
+  "common.made_with_ai_from_the_words_of_this_story": "Made with AI from the words of this story.",
+  "common.the_voice_is_the_recording_of_name": "The voice is the recording of {name}.",
+  "common.the_voice_was_generated_with_the_video": "The voice was generated with the video.",
+  "common.the_voice_is_the_narration_of_this_story": "The voice is the narration of this story."
 }

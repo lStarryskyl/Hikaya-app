@@ -66,6 +66,8 @@ export interface VideoJobResult {
   needs_confirmation?: boolean
   audio?: VoiceSource
   script?: ShotScript | null
+  /** Whether this is the video its story's page shows to everyone. */
+  shown?: boolean
 }
 export interface VideoConfig {
   enabled: boolean
@@ -99,6 +101,12 @@ export const retryVideo = (id: string, confirmResubmit = false): Promise<VideoJo
     `/staff/videos/${id}/retry`,
     confirmResubmit ? { body: { confirm_resubmit: true } } : { method: 'POST' },
   )
+/** Show a finished narrated video on its story's page, to everyone; null takes it off. */
+export const showStoryVideo = (storyId: string, videoId: string | null) =>
+  api<{ id: string }>(`/staff/stories/${storyId}/video`, {
+    method: 'PUT',
+    body: { video_id: videoId },
+  })
 /** Seconds as M:SS. */
 export function formatLength(seconds: number): string {
   const whole = Math.max(0, Math.round(seconds))

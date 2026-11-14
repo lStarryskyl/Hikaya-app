@@ -539,12 +539,65 @@ function Player({
                   <Photo
                     key={photo.slug}
                     photo={photo}
-                    width={288}
+                    // The story's own photos are a post to browse; a place gallery stays small.
+                    width={story.photos.length ? 480 : 288}
                     alt={photo.caption}
-                    className="h-24 w-36 shrink-0 rounded-lg border border-border object-cover"
+                    className={`${
+                      story.photos.length ? 'h-44 w-64' : 'h-24 w-36'
+                    } shrink-0 rounded-lg border border-border object-cover`}
                   />
                 ))}
               </div>
+            </div>
+          )}
+
+          {story.record.video && (
+            <div className="mb-6">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
+                {t('Video story')}
+              </div>
+              {/* Its subtitles are part of the picture, in the story's language and English. */}
+              <video
+                src={story.record.video.url}
+                controls
+                playsInline
+                preload="metadata"
+                className="aspect-video w-full rounded-xl2 bg-black"
+                aria-label={`${t('Video story')}: ${story.title}`}
+              >
+                {/* Off by default: the same lines are already drawn on the picture. */}
+                <track
+                  kind="captions"
+                  srcLang={story.record.original_language === 'english' ? 'en' : 'ar'}
+                  label={t('Transcript')}
+                  src={captions(story.record.video.captions)}
+                />
+                {story.record.video.captions.some((line) => line.english) && (
+                  <track
+                    kind="captions"
+                    srcLang="en"
+                    label="English"
+                    src={captions(
+                      story.record.video.captions.map((line) => ({
+                        ...line,
+                        text: line.english ?? '',
+                      })),
+                    )}
+                  />
+                )}
+              </video>
+              <p className="mt-2 text-[11px] text-muted">
+                {t('Made with AI from the words of this story.')}{' '}
+                {story.record.video.voice === 'recording'
+                  ? message('The voice is the recording of {name}.', { name: story.narrator })
+                  : story.record.video.voice === 'omni'
+                    ? t('The voice was generated with the video.')
+                    : story.record.video.narrated_by
+                      ? message('Narrated in the voice of {name}.', {
+                          name: story.record.video.narrated_by,
+                        })
+                      : t('The voice is the narration of this story.')}
+              </p>
             </div>
           )}
 

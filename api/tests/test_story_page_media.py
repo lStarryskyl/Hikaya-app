@@ -9,6 +9,7 @@ from sqlalchemy import select
 from app import media
 from app.config import get_settings
 from app.models import AuditEvent, Story, User, VideoGeneration
+from app.narrated_video import LEAD_MS
 from tests.test_moderation import drain
 from tests.test_narrated_video import narrated, probe, story_with_soundtrack, webp_photo
 from tests.test_pipeline import sign_up
@@ -136,12 +137,18 @@ async def test_a_finished_narrated_video_is_shown_on_the_story_page_to_everyone(
     client, session, sessionmaker, monkeypatch
 ):
     story, video_id = await finished_video(client, session, sessionmaker, monkeypatch)
+    staff_view = (await client.get(f"/api/v1/staff/videos/{video_id}")).json()
+    assert staff_view["shown"] is False
     r = await show(client, story, video_id)
     assert r.status_code == 200, r.text
+    assert (await client.get(f"/api/v1/staff/videos/{video_id}")).json()["shown"] is True
 
     client.cookies.clear()  # a visitor, not signed in
     video = (await client.get(f"/api/v1/stories/{story.id}")).json()["video"]
     assert video["voice"] == "recording"
+    # Captions in video time (the picture starts before the first word), with the English.
+    first = video["captions"][0]
+    assert first["start_ms"] == LEAD_MS and first["text"] and first["english"]
     played = await client.get(video["url"])
     assert played.status_code == 200
     assert played.headers["content-type"] == "video/mp4"

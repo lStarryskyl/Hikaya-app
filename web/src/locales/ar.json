@@ -593,5 +593,16 @@
   "common.that_file_could_not_be_read_as_text": "تعذّرت قراءة هذا الملف كنص.",
   "common.that_file_is_too_large_stories_can_be_up_to_max_characters": "الملف كبير جدًا؛ الحد الأقصى لعدد أحرف القصة: {max}.",
   "common.choose_the_language_of_the_story_first": "اختر لغة القصة أولًا.",
-  "common.write_or_paste_the_story_first": "اكتب القصة أو الصقها أولًا."
+  "common.write_or_paste_the_story_first": "اكتب القصة أو الصقها أولًا.",
+  "common.photos_on_the_story_page": "صور صفحة القصة",
+  "common.visitors_browse_these_before_the_video_story_the_first_one_opens_a_new_video": "يتصفحها الزوار قبل فيديو القصة، والصورة الأولى تفتتح أي فيديو جديد.",
+  "common.the_story_page_could_not_be_changed": "تعذّر تعديل صفحة القصة.",
+  "common.shown_on_the_story_page": "معروض في صفحة القصة",
+  "common.take_it_off_the_story_page": "إزالته من صفحة القصة",
+  "common.show_on_the_story_page": "عرضه في صفحة القصة",
+  "common.video_story": "فيديو القصة",
+  "common.made_with_ai_from_the_words_of_this_story": "صُنع بالذكاء الاصطناعي من كلمات هذه القصة.",
+  "common.the_voice_is_the_recording_of_name": "الصوت من تسجيل {name}.",
+  "common.the_voice_was_generated_with_the_video": "وُلِّد الصوت مع الفيديو.",
+  "common.the_voice_is_the_narration_of_this_story": "الصوت هو سرد هذه القصة."
 }

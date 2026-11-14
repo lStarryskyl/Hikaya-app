@@ -1,0 +1,505 @@
+{
+ "format": 1,
+ "story": {
+  "id": "283353f4-b890-45c9-b67a-d9ef9fe4124a",
+  "title": "مجلة بعد أربعين سنة",
+  "category": "personal",
+  "place_name": "كشك أحمد كايد للثقافة، وسط البلد، عمّان",
+  "place_slug": null,
+  "latitude": 31.95193,
+  "longitude": 35.93304,
+  "original_language": "jordanian",
+  "duration_ms": 47647,
+  "tags": [
+   "كتب",
+   "كشك",
+   "وسط البلد"
+  ],
+  "narration_source": "polished",
+  "consent_version": "2026-10-23",
+  "consented_at": "2026-11-14T18:53:35.040834+00:00",
+  "published_at": "2026-11-14T18:53:35.134724+00:00"
+ },
+ "storyteller": {
+  "id": "cfc0b74a-b85d-4655-a867-72e14a68315c",
+  "display_name": "طارق أحمد كايد"
+ },
+ "layers": [
+  {
+   "kind": "polished",
+   "language": "jordanian",
+   "edited": true,
+   "segments": [
+    {
+     "text": "في أشيا كانت تأثر فيّ: ناس بتحب القراءة وما معها مصاري. وسبحان الله، بيرجعوا لي وبيقولوا: أنا كنت آجي عندك زمان.",
+     "end_ms": 7540,
+     "start_ms": 580
+    },
+    {
+     "text": "أجاني مرة واحد وقال لي: أخذت منك كتاب، وحابب أشتريه.",
+     "end_ms": 10320,
+     "start_ms": 7680
+    },
+    {
+     "text": "هذا موقف ما بنساه. قال لي: أخذت منك مجلة وأنا صغير، وكنت حابب…",
+     "end_ms": 18020,
+     "start_ms": 11180
+    },
+    {
+     "text": "حابب أشتريها.",
+     "end_ms": 19860,
+     "start_ms": 18080
+    },
+    {
+     "text": "بس ما كان معي مصاري، فأخذتها. ورجع لي بعد حوالي أربعين سنة.",
+     "end_ms": 23560,
+     "start_ms": 20180
+    },
+    {
+     "text": "كان بأمريكا، وقال لي: طول اليوم مش عارف أنام،",
+     "end_ms": 28580,
+     "start_ms": 24960
+    },
+    {
+     "text": "وإنت ببالي. يا عمي، أنا أخذت منك مجلة، وهاي سعرها.",
+     "end_ms": 32500,
+     "start_ms": 29120
+    },
+    {
+     "text": "قلت له: يا عمي، مسامحك دنيا وآخرة. وأي حدا، حتى لو من زمان، الله يسامحه في الدنيا والآخرة.",
+     "end_ms": 38520,
+     "start_ms": 33400
+    },
+    {
+     "text": "لأنه مش لازم تكون الأمور كلها مادية، خصوصًا إحنا ودورنا في نشر الثقافة",
+     "end_ms": 45040,
+     "start_ms": 39220
+    },
+    {
+     "text": "في الأردن. والحمد لله رب العالمين.",
+     "end_ms": 47600,
+     "start_ms": 46040
+    }
+   ]
+  },
+  {
+   "kind": "translation_en",
+   "language": "english",
+   "edited": true,
+   "segments": [
+    {
+     "text": "Some things really moved me: people who loved reading but had no money. And, glory be to God, they come back to me and say: I used to come to you, back then.",
+     "end_ms": 7540,
+     "start_ms": 580
+    },
+    {
+     "text": "Once a man came and told me: I took a book from you, and I'd like to pay for it.",
+     "end_ms": 10320,
+     "start_ms": 7680
+    },
+    {
+     "text": "It's a moment I'll never forget. He said: I took a magazine from you when I was little, and I wanted…",
+     "end_ms": 18020,
+     "start_ms": 11180
+    },
+    {
+     "text": "I wanted to buy it.",
+     "end_ms": 19860,
+     "start_ms": 18080
+    },
+    {
+     "text": "But I had no money, so I took it. He came back to me about forty years later.",
+     "end_ms": 23560,
+     "start_ms": 20180
+    },
+    {
+     "text": "He had been in America, and he said: all day long I can't sleep,",
+     "end_ms": 28580,
+     "start_ms": 24960
+    },
+    {
+     "text": "with you on my mind. Uncle, I took a magazine from you, and here is its price.",
+     "end_ms": 32500,
+     "start_ms": 29120
+    },
+    {
+     "text": "I told him: uncle, I forgive you, in this world and the next. Anyone at all, even from long ago, may God forgive him in this world and the next.",
+     "end_ms": 38520,
+     "start_ms": 33400
+    },
+    {
+     "text": "Because things shouldn't all be about money, especially for us, in our role of spreading culture",
+     "end_ms": 45040,
+     "start_ms": 39220
+    },
+    {
+     "text": "in Jordan. Praise be to God.",
+     "end_ms": 47600,
+     "start_ms": 46040
+    }
+   ]
+  },
+  {
+   "kind": "translation_msa",
+   "language": "msa",
+   "edited": true,
+   "segments": [
+    {
+     "text": "ثمة أمورٌ كانت تؤثر فيّ: أناسٌ يحبون القراءة ولا مال لديهم. وسبحان الله، يعودون إليّ ويقولون: كنتُ آتي إليك في ذلك الزمان.",
+     "end_ms": 7540,
+     "start_ms": 580
+    },
+    {
+     "text": "جاءني رجلٌ مرةً وقال لي: أخذتُ منك كتابًا، وأودّ أن أشتريه.",
+     "end_ms": 10320,
+     "start_ms": 7680
+    },
+    {
+     "text": "إنه موقفٌ لا أنساه. قال لي: أخذتُ منك مجلةً وأنا صغير، وكنتُ أودّ…",
+     "end_ms": 18020,
+     "start_ms": 11180
+    },
+    {
+     "text": "أن أشتريها.",
+     "end_ms": 19860,
+     "start_ms": 18080
+    },
+    {
+     "text": "لكن لم يكن معي مال، فأخذتها. وعاد إليّ بعد نحو أربعين عامًا.",
+     "end_ms": 23560,
+     "start_ms": 20180
+    },
+    {
+     "text": "كان في أمريكا، وقال لي: طوال اليوم لا أستطيع النوم،",
+     "end_ms": 28580,
+     "start_ms": 24960
+    },
+    {
+     "text": "وأنت في بالي. يا عمّ، أخذتُ منك مجلةً، وهذا ثمنها.",
+     "end_ms": 32500,
+     "start_ms": 29120
+    },
+    {
+     "text": "فقلت له: يا عمّ، أنا مسامحك في الدنيا والآخرة. وكلُّ أحد، ولو من زمنٍ بعيد، يسامحه الله في الدنيا والآخرة.",
+     "end_ms": 38520,
+     "start_ms": 33400
+    },
+    {
+     "text": "فلا ينبغي أن تكون الأمور كلها مادية، ولا سيما نحن ودورنا في نشر الثقافة",
+     "end_ms": 45040,
+     "start_ms": 39220
+    },
+    {
+     "text": "في الأردن. والحمد لله رب العالمين.",
+     "end_ms": 47600,
+     "start_ms": 46040
+    }
+   ]
+  },
+  {
+   "kind": "verbatim",
+   "language": "jordanian",
+   "edited": true,
+   "segments": [
+    {
+     "text": "بس كان شغلات تأثرني. كان في ناس تحب القراءة وما في معها مصاري، وبيرجعوا لي، يعني سبحان الله، بيقول: أنا كنت آجي عندك هديك المرة.",
+     "end_ms": 7540,
+     "start_ms": 580
+    },
+    {
+     "text": "أجاني واحد قال لي: أخذت منك كتاب، حابب أشتريه.",
+     "end_ms": 10320,
+     "start_ms": 7680
+    },
+    {
+     "text": "يعني هذا موقف ما بنساه. قال لي: أخذت منك كتاب، مجلة، أخذتها وأنا كنت صغير، وحبيت…",
+     "end_ms": 18020,
+     "start_ms": 11180
+    },
+    {
+     "text": "حبيت إنه أنا أشتري هذا الكتاب.",
+     "end_ms": 19860,
+     "start_ms": 18080
+    },
+    {
+     "text": "ما معي مصاري، أخذته. رجع لي بعد حوالي أربعين سنة.",
+     "end_ms": 23560,
+     "start_ms": 20180
+    },
+    {
+     "text": "كان بأمريكا. قال لي: طول اليوم ماني عارف أنام،",
+     "end_ms": 28580,
+     "start_ms": 24960
+    },
+    {
+     "text": "وإنت ببالي. أنا يا عمي أخذت منك مجلة، وهاي سعرها.",
+     "end_ms": 32500,
+     "start_ms": 29120
+    },
+    {
+     "text": "قلت له: يا عمي، مسامحك دنيا وآخرة. أنا أي واحد، حتى واحد من زمان، الله يسامحه في الدنيا والآخرة.",
+     "end_ms": 38520,
+     "start_ms": 33400
+    },
+    {
+     "text": "فإذا كان الإنسان، عفوًا، ما تكون الأمور كلها مادية يعني، خاصة إحنا في دورنا، دور النشر الثقافي",
+     "end_ms": 45040,
+     "start_ms": 39220
+    },
+    {
+     "text": "في الأردن. والحمد لله رب العالمين.",
+     "end_ms": 47600,
+     "start_ms": 46040
+    }
+   ]
+  }
+ ],
+ "recording": {
+  "file": "recording.mp3",
+  "content_type": "audio/mpeg"
+ },
+ "narration": {
+  "file": "narration.mp3",
+  "content_type": "audio/mpeg",
+  "provider": "elevenlabs",
+  "voice": "JBFqnCBsd6RMkjVDRZzb",
+  "language": "jordanian",
+  "source": "polished",
+  "timing": "alignment",
+  "segments": [
+   {
+    "text": "في أشيا كانت تأثر فيّ: ناس بتحب القراءة وما معها مصاري. وسبحان الله، بيرجعوا لي وبيقولوا: أنا كنت آجي عندك زمان.",
+    "end_ms": 8812,
+    "start_ms": 0
+   },
+   {
+    "text": "أجاني مرة واحد وقال لي: أخذت منك كتاب، وحابب أشتريه.",
+    "end_ms": 13224,
+    "start_ms": 8812
+   },
+   {
+    "text": "هذا موقف ما بنساه. قال لي: أخذت منك مجلة وأنا صغير، وكنت حابب…",
+    "end_ms": 18727,
+    "start_ms": 13224
+   },
+   {
+    "text": "حابب أشتريها.",
+    "end_ms": 20108,
+    "start_ms": 18727
+   },
+   {
+    "text": "بس ما كان معي مصاري، فأخذتها. ورجع لي بعد حوالي أربعين سنة.",
+    "end_ms": 24938,
+    "start_ms": 20108
+   },
+   {
+    "text": "كان بأمريكا، وقال لي: طول اليوم مش عارف أنام،",
+    "end_ms": 28142,
+    "start_ms": 24938
+   },
+   {
+    "text": "وإنت ببالي. يا عمي، أنا أخذت منك مجلة، وهاي سعرها.",
+    "end_ms": 32995,
+    "start_ms": 28142
+   },
+   {
+    "text": "قلت له: يا عمي، مسامحك دنيا وآخرة. وأي حدا، حتى لو من زمان، الله يسامحه في الدنيا والآخرة.",
+    "end_ms": 39659,
+    "start_ms": 32995
+   },
+   {
+    "text": "لأنه مش لازم تكون الأمور كلها مادية، خصوصًا إحنا ودورنا في نشر الثقافة",
+    "end_ms": 44466,
+    "start_ms": 39659
+   },
+   {
+    "text": "في الأردن. والحمد لله رب العالمين.",
+    "end_ms": 47415,
+    "start_ms": 44466
+   }
+  ],
+  "input_hash": "12e3145041989868ff9bf5d1cb3f65392c3aa5f5fce403b7c9dc71659fec6366"
+ },
+ "slideshow": {
+  "file": "slideshow.mp4",
+  "content_type": "video/mp4"
+ },
+ "photos": [
+  {
+   "file": "photo-01.webp"
+  },
+  {
+   "file": "photo-02.webp"
+  },
+  {
+   "file": "photo-03.webp"
+  },
+  {
+   "file": "photo-04.webp"
+  },
+  {
+   "file": "photo-05.webp"
+  },
+  {
+   "file": "photo-06.webp"
+  },
+  {
+   "file": "photo-07.webp"
+  }
+ ],
+ "video": {
+  "id": "63002178-09ff-4538-8c56-8d72cfc09d04",
+  "file": "video.mp4",
+  "provider": "gemini_omni",
+  "input_hash": "9ff453e9464ae731596f61020dbe28f679fb52e75a611016742c24375fa4d998",
+  "payload": {
+   "rtl": true,
+   "mode": "narrated",
+   "seed": 0,
+   "audio": "soundtrack",
+   "lines": [
+    {
+     "end_ms": 7540,
+     "spoken": "في أشيا كانت تأثر فيّ: ناس بتحب القراءة وما معها مصاري. وسبحان الله، بيرجعوا لي وبيقولوا: أنا كنت آجي عندك زمان.",
+     "english": "Some things really moved me: people who loved reading but had no money. And, glory be to God, they come back to me and say: I used to come to you, back then.",
+     "start_ms": 580
+    },
+    {
+     "end_ms": 10320,
+     "spoken": "أجاني مرة واحد وقال لي: أخذت منك كتاب، وحابب أشتريه.",
+     "english": "Once a man came and told me: I took a book from you, and I'd like to pay for it.",
+     "start_ms": 7680
+    },
+    {
+     "end_ms": 18020,
+     "spoken": "هذا موقف ما بنساه. قال لي: أخذت منك مجلة وأنا صغير، وكنت حابب…",
+     "english": "It's a moment I'll never forget. He said: I took a magazine from you when I was little, and I wanted…",
+     "start_ms": 11180
+    },
+    {
+     "end_ms": 19860,
+     "spoken": "حابب أشتريها.",
+     "english": "I wanted to buy it.",
+     "start_ms": 18080
+    },
+    {
+     "end_ms": 23560,
+     "spoken": "بس ما كان معي مصاري، فأخذتها. ورجع لي بعد حوالي أربعين سنة.",
+     "english": "But I had no money, so I took it. He came back to me about forty years later.",
+     "start_ms": 20180
+    },
+    {
+     "end_ms": 28580,
+     "spoken": "كان بأمريكا، وقال لي: طول اليوم مش عارف أنام،",
+     "english": "He had been in America, and he said: all day long I can't sleep,",
+     "start_ms": 24960
+    },
+    {
+     "end_ms": 32500,
+     "spoken": "وإنت ببالي. يا عمي، أنا أخذت منك مجلة، وهاي سعرها.",
+     "english": "with you on my mind. Uncle, I took a magazine from you, and here is its price.",
+     "start_ms": 29120
+    },
+    {
+     "end_ms": 38520,
+     "spoken": "قلت له: يا عمي، مسامحك دنيا وآخرة. وأي حدا، حتى لو من زمان، الله يسامحه في الدنيا والآخرة.",
+     "english": "I told him: uncle, I forgive you, in this world and the next. Anyone at all, even from long ago, may God forgive him in this world and the next.",
+     "start_ms": 33400
+    },
+    {
+     "end_ms": 45040,
+     "spoken": "لأنه مش لازم تكون الأمور كلها مادية، خصوصًا إحنا ودورنا في نشر الثقافة",
+     "english": "Because things shouldn't all be about money, especially for us, in our role of spreading culture",
+     "start_ms": 39220
+    },
+    {
+     "end_ms": 47600,
+     "spoken": "في الأردن. والحمد لله رب العالمين.",
+     "english": "in Jordan. Praise be to God.",
+     "start_ms": 46040
+    }
+   ],
+   "model": "gemini-omni-1.2-flash",
+   "prompt": "Documentary realism in daylight, matching the opening photo: the real kiosk of Ahmad Kayed in downtown Amman, with its wooden sign, red tiled roof and shelves of Arabic books and magazines. Keep this same kiosk in every shot. Its owner is an older Jordanian man with grey hair. Memory scenes set around 1980, in softly faded colours: a thin local boy reading a magazine at the kiosk and slipping one under his arm. Present day: a man in his fifties, back from abroad, emotional, handing banknotes to the owner, who smiles and gently refuses them. Do not add any new signs, posters, captions or writing; show the original sign only as it is in the photo, or keep it out of frame.",
+   "seconds": 48.5,
+   "language": "jordanian",
+   "subtitles": true,
+   "soundtrack": "recording",
+   "lines_total": 10,
+   "aspect_ratio": "16:9",
+   "voice_clone_id": null
+  },
+  "shots": [
+   {
+    "start_ms": 0,
+    "end_ms": 11480,
+    "seconds": 12,
+    "lines": [
+     0,
+     1
+    ],
+    "prompt": "Shot 1 of 4 of one continuous short film for the heritage story \"مجلة بعد أربعين سنة\" from كشك أحمد كايد للثقافة، وسط البلد، عمّان.\nStart from the provided photo.\nThe people, exactly the same in every shot: Ahmad Kayed, a 70s Jordanian kiosk owner with grey hair and a dark knit vest over a collared shirt. The Customer, a man in his 50s wearing a travel jacket. The Boy, a slender 10-year-old child in faded 1980s clothing.\nSetting: Ahmad Kayed Kiosk in downtown Amman, Jordan. Red-tiled roof, wooden carved sign, and dense book displays under sunny daylight, shifting to muted vintage tones for the memory.\nIn this shot: From the photo framing, Ahmad Kayed straightens book stacks below the sign as the customer walks up to the counter. Camera: Slow tilt down from the wooden sign to eye level, pushing toward the counter.\nThe narrator is saying: \"Some things really moved me: people who loved reading but had no money. And, glory be to God, they come back to me and say: I used to come to you, back then. Once a man came and told me: I took a book from you, and I'd like to pay for it.\" Show what these words describe.\nVisual direction: Documentary realism in daylight, matching the opening photo: the real kiosk of Ahmad Kayed in downtown Amman, with its wooden sign, red tiled roof and shelves of Arabic books and magazines. Keep this same kiosk in every shot. Its owner is an older Jordanian man with grey hair. Memory scenes set around 1980, in softly faded colours: a thin local boy reading a magazine at the kiosk and slipping one under his arm. Present day: a man in his fifties, back from abroad, emotional, handing banknotes to the owner, who smiles and gently refuses them. Do not add any new signs, posters, captions or writing; show the original sign only as it is in the photo, or keep it out of frame.\nNo one speaks or moves their lips on camera; no text, captions or logos on screen."
+   },
+   {
+    "start_ms": 11480,
+    "end_ms": 25260,
+    "seconds": 14,
+    "lines": [
+     2,
+     3,
+     4
+    ],
+    "prompt": "Shot 2 of 4 of one continuous short film for the heritage story \"مجلة بعد أربعين سنة\" from كشك أحمد كايد للثقافة، وسط البلد، عمّان.\nThis shot continues straight on from the previous shot: the image given is its last frame, so start exactly from it and the cut is seamless. Keep the same people with the same faces, hair and clothes as in that image, even when the scene moves to another place.\nThe people, exactly the same in every shot: Ahmad Kayed, a 70s Jordanian kiosk owner with grey hair and a dark knit vest over a collared shirt. The Customer, a man in his 50s wearing a travel jacket. The Boy, a slender 10-year-old child in faded 1980s clothing.\nSetting: Ahmad Kayed Kiosk in downtown Amman, Jordan. Red-tiled roof, wooden carved sign, and dense book displays under sunny daylight, shifting to muted vintage tones for the memory.\nIn this shot: The scene softly shifts in color as the boy sneaks a magazine under his arm, dissolving back into the present customer confessing. Camera: Slow push-in toward the magazine racks, holding steady as the time period shifts.\nThe narrator is saying: \"It's a moment I'll never forget. He said: I took a magazine from you when I was little, and I wanted… I wanted to buy it. But I had no money, so I took it. He came back to me about forty years later.\" Show what these words describe.\nVisual direction: Documentary realism in daylight, matching the opening photo: the real kiosk of Ahmad Kayed in downtown Amman, with its wooden sign, red tiled roof and shelves of Arabic books and magazines. Keep this same kiosk in every shot. Its owner is an older Jordanian man with grey hair. Memory scenes set around 1980, in softly faded colours: a thin local boy reading a magazine at the kiosk and slipping one under his arm. Present day: a man in his fifties, back from abroad, emotional, handing banknotes to the owner, who smiles and gently refuses them. Do not add any new signs, posters, captions or writing; show the original sign only as it is in the photo, or keep it out of frame.\nNo one speaks or moves their lips on camera; no text, captions or logos on screen."
+   },
+   {
+    "start_ms": 25260,
+    "end_ms": 39520,
+    "seconds": 15,
+    "lines": [
+     5,
+     6,
+     7
+    ],
+    "prompt": "Shot 3 of 4 of one continuous short film for the heritage story \"مجلة بعد أربعين سنة\" from كشك أحمد كايد للثقافة، وسط البلد، عمّان.\nThis shot continues straight on from the previous shot: the image given is its last frame, so start exactly from it and the cut is seamless. Keep the same people with the same faces, hair and clothes as in that image, even when the scene moves to another place.\nThe people, exactly the same in every shot: Ahmad Kayed, a 70s Jordanian kiosk owner with grey hair and a dark knit vest over a collared shirt. The Customer, a man in his 50s wearing a travel jacket. The Boy, a slender 10-year-old child in faded 1980s clothing.\nSetting: Ahmad Kayed Kiosk in downtown Amman, Jordan. Red-tiled roof, wooden carved sign, and dense book displays under sunny daylight, shifting to muted vintage tones for the memory.\nIn this shot: The customer extends folded paper money, but Ahmad gently covers the man's hand and pushes it away with an open smile. Camera: Close-up pan from the customer's offering hand to Ahmad's forgiving face.\nThe narrator is saying: \"He had been in America, and he said: all day long I can't sleep, with you on my mind. Uncle, I took a magazine from you, and here is its price. I told him: uncle, I forgive you, in this world and the next. Anyone at all, even from long ago, may God forgive him in this world and the next.\" Show what these words describe.\nVisual direction: Documentary realism in daylight, matching the opening photo: the real kiosk of Ahmad Kayed in downtown Amman, with its wooden sign, red tiled roof and shelves of Arabic books and magazines. Keep this same kiosk in every shot. Its owner is an older Jordanian man with grey hair. Memory scenes set around 1980, in softly faded colours: a thin local boy reading a magazine at the kiosk and slipping one under his arm. Present day: a man in his fifties, back from abroad, emotional, handing banknotes to the owner, who smiles and gently refuses them. Do not add any new signs, posters, captions or writing; show the original sign only as it is in the photo, or keep it out of frame.\nNo one speaks or moves their lips on camera; no text, captions or logos on screen."
+   },
+   {
+    "start_ms": 39520,
+    "end_ms": 47900,
+    "seconds": 9,
+    "lines": [
+     8,
+     9
+    ],
+    "prompt": "Shot 4 of 4 of one continuous short film for the heritage story \"مجلة بعد أربعين سنة\" from كشك أحمد كايد للثقافة، وسط البلد، عمّان.\nThis shot continues straight on from the previous shot: the image given is its last frame, so start exactly from it and the cut is seamless. Keep the same people with the same faces, hair and clothes as in that image, even when the scene moves to another place.\nThe people, exactly the same in every shot: Ahmad Kayed, a 70s Jordanian kiosk owner with grey hair and a dark knit vest over a collared shirt. The Customer, a man in his 50s wearing a travel jacket. The Boy, a slender 10-year-old child in faded 1980s clothing.\nSetting: Ahmad Kayed Kiosk in downtown Amman, Jordan. Red-tiled roof, wooden carved sign, and dense book displays under sunny daylight, shifting to muted vintage tones for the memory.\nIn this shot: Ahmad warmly pats the customer's arm and turns back to tend to his kiosk shelves under the sun. Camera: Slow pull-back to a wide establishing shot framing the entire kiosk exterior.\nThe narrator is saying: \"Because things shouldn't all be about money, especially for us, in our role of spreading culture in Jordan. Praise be to God.\" Show what these words describe.\nVisual direction: Documentary realism in daylight, matching the opening photo: the real kiosk of Ahmad Kayed in downtown Amman, with its wooden sign, red tiled roof and shelves of Arabic books and magazines. Keep this same kiosk in every shot. Its owner is an older Jordanian man with grey hair. Memory scenes set around 1980, in softly faded colours: a thin local boy reading a magazine at the kiosk and slipping one under his arm. Present day: a man in his fifties, back from abroad, emotional, handing banknotes to the owner, who smiles and gently refuses them. Do not add any new signs, posters, captions or writing; show the original sign only as it is in the photo, or keep it out of frame.\nNo one speaks or moves their lips on camera; no text, captions or logos on screen."
+   }
+  ],
+  "script": {
+   "cast": "Ahmad Kayed, a 70s Jordanian kiosk owner with grey hair and a dark knit vest over a collared shirt. The Customer, a man in his 50s wearing a travel jacket. The Boy, a slender 10-year-old child in faded 1980s clothing.",
+   "shots": [
+    {
+     "sound": "Distant traffic hum, gentle street bustle, and rustling book pages.",
+     "action": "From the photo framing, Ahmad Kayed straightens book stacks below the sign as the customer walks up to the counter.",
+     "camera": "Slow tilt down from the wooden sign to eye level, pushing toward the counter."
+    },
+    {
+     "sound": "Vintage street ambiance fading into quiet present-day pavement murmurs.",
+     "action": "The scene softly shifts in color as the boy sneaks a magazine under his arm, dissolving back into the present customer confessing.",
+     "camera": "Slow push-in toward the magazine racks, holding steady as the time period shifts."
+    },
+    {
+     "sound": "Subtle rustle of paper banknotes and soft fabric movement.",
+     "action": "The customer extends folded paper money, but Ahmad gently covers the man's hand and pushes it away with an open smile.",
+     "camera": "Close-up pan from the customer's offering hand to Ahmad's forgiving face."
+    },
+    {
+     "sound": "Distant Amman street chatter and afternoon breeze rustling paper covers.",
+     "action": "Ahmad warmly pats the customer's arm and turns back to tend to his kiosk shelves under the sun.",
+     "camera": "Slow pull-back to a wide establishing shot framing the entire kiosk exterior."
+    }
+   ],
+   "setting": "Ahmad Kayed Kiosk in downtown Amman, Jordan. Red-tiled roof, wooden carved sign, and dense book displays under sunny daylight, shifting to muted vintage tones for the memory.",
+   "narrator": "Elderly Jordanian male voice, warm, gentle, and measured.",
+   "provider": "gemini"
+  }
+ }
+}

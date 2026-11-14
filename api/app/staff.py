@@ -9,13 +9,13 @@ import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app import discover, media, stories, voices
+from app import discover, media, photos, stories, voices
 from app.auth import require_roles
 from app.config import get_settings
 from app.db import get_session
@@ -28,8 +28,10 @@ from app.models import (
     Story,
     StoryStatus,
     User,
+    VideoGeneration,
     VoiceClone,
 )
+from app.storage import LocalStorage, get_storage
 
 router = APIRouter(prefix="/staff", tags=["staff"])
 
@@ -310,6 +312,100 @@ async def choose_narrator(
     )
     await session.commit()
     return {"id": str(story.id), "narrator": speaker}
+
+
+# --- a published story's page: photos and the video story ---
+
+SUBMITTED = {StoryStatus.PUBLISHED, StoryStatus.HELD, StoryStatus.MODERATING}
+
+
+async def _submitted_story(session: AsyncSession, story_id: str, user: User) -> Story:
+    """A submitted story that is not the staff member's own, locked until commit."""
+    story = await _story_for_action(session, story_id, user)
+    _require(
+        story.status in SUBMITTED,
+        "Staff change photos and videos of submitted stories; drafts belong to their author.",
+    )
+    return story
+
+
+async def _photos_changed(
+    session: AsyncSession, story: Story, user: User, action: AuditAction, detail: dict
+) -> None:
+    """Make the slideshow again from the new photos, and record who changed them."""
+    await media.queue(session, story)
+    await _audit_and_commit(session, story, user, action, detail)
+
+
+@router.post("/stories/{story_id}/photos", status_code=201, response_model=photos.StoryPhotoOut)
+async def add_story_photo(
+    story_id: str,
+    file: UploadFile,
+    user: User = Depends(staff_only),
+    session: AsyncSession = Depends(get_session),
+    storage: LocalStorage = Depends(get_storage),
+) -> photos.StoryPhotoOut:
+    story = await _submitted_story(session, story_id, user)
+    added = await photos.add_upload(session, story, file, storage)
+    await _photos_changed(session, story, user, AuditAction.PHOTO_ADDED, {"photo": str(added.id)})
+    return added
+
+
+@router.put("/stories/{story_id}/photos/order", response_model=list[photos.StoryPhotoOut])
+async def reorder_story_photos(
+    story_id: str,
+    body: stories.PhotoOrder,
+    user: User = Depends(staff_only),
+    session: AsyncSession = Depends(get_session),
+) -> list[photos.StoryPhotoOut]:
+    story = await _submitted_story(session, story_id, user)
+    await photos.reorder(session, story, body.ids)
+    order = [str(i) for i in body.ids]
+    await _photos_changed(session, story, user, AuditAction.PHOTOS_REORDERED, {"order": order})
+    return await photos.list_for(session, story.id)
+
+
+@router.delete("/stories/{story_id}/photos/{photo_id}", status_code=204)
+async def remove_story_photo(
+    story_id: str,
+    photo_id: uuid.UUID,
+    user: User = Depends(staff_only),
+    session: AsyncSession = Depends(get_session),
+    storage: LocalStorage = Depends(get_storage),
+) -> Response:
+    story = await _submitted_story(session, story_id, user)
+    await photos.remove(session, story, photo_id, storage)
+    await _photos_changed(session, story, user, AuditAction.PHOTO_REMOVED, {"photo": str(photo_id)})
+    return Response(status_code=204)
+
+
+class StoryVideoIn(BaseModel):
+    video_id: uuid.UUID | None = None  # None takes the video off the page
+
+
+@router.put("/stories/{story_id}/video")
+async def show_story_video(
+    story_id: str,
+    body: StoryVideoIn,
+    user: User = Depends(staff_only),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Show a finished narrated video of the story on its page, to everyone, or hide it."""
+    story = await _submitted_story(session, story_id, user)
+    if body.video_id is None:
+        story.featured_video_id = None
+        action = AuditAction.VIDEO_HIDDEN
+    else:
+        generation = await session.get(VideoGeneration, body.video_id)
+        if generation is None or generation.story_id != story.id:
+            raise HTTPException(404, "This story has no such video.")
+        _require(stories.video_ready(generation), "Only a finished narrated video can be shown.")
+        story.featured_video_id = generation.id
+        action = AuditAction.VIDEO_SHOWN
+    await _audit_and_commit(
+        session, story, user, action, {"video": str(body.video_id)} if body.video_id else None
+    )
+    return {"id": str(story.id), "video": await stories.video_out(session, story)}
 
 
 # --- members ---

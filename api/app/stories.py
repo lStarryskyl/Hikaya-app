@@ -30,6 +30,7 @@ from app.models import (
     Story,
     StoryStatus,
     User,
+    VideoGeneration,
     VoiceClone,
 )
 from app.providers import MODERATION_LABELS
@@ -99,6 +100,16 @@ class NarrationOut(BaseModel):
 class MediaOut(BaseModel):
     url: str
     content_type: str
+
+
+class StoryVideoOut(BaseModel):
+    """The narrated video staff show on the story's page, to everyone (made by AI from the
+    story's own words). `voice` is what is heard: the storyteller's recording, the narration,
+    or the video model's own voice."""
+
+    url: str
+    voice: str  # recording | narration | omni
+    narrated_by: str | None = None  # a consenting cloned voice reading the narration
 
 
 class AiVideoOut(BaseModel):
@@ -219,6 +230,7 @@ class StoryOut(BaseModel):
     narration: NarrationOut | None
     slideshow: MediaOut | None
     ai_video: AiVideoOut | None = None
+    video: StoryVideoOut | None = None
     # Staff and the author only: the cloned voice chosen to narrate it, if any.
     narrator_voice_id: uuid.UUID | None = None
     # For the author and staff only; None for everyone else.
@@ -318,6 +330,42 @@ async def _slideshow_out(session: AsyncSession, story_id: uuid.UUID) -> MediaOut
     return MediaOut(url=media_url(asset), content_type=asset.content_type) if asset else None
 
 
+def video_ready(generation: VideoGeneration) -> bool:
+    """A finished narrated video whose file is still there (not removed with its voice)."""
+    return (
+        generation.payload.get("mode") == "narrated"
+        and not generation.payload.get("removed")
+        and bool(generation.file_key)
+        and get_storage().exists(generation.file_key)
+    )
+
+
+async def shown_video(session: AsyncSession, story: Story) -> VideoGeneration | None:
+    """The video shown on the story's page, while it is still finished and the story's."""
+    if story.featured_video_id is None:
+        return None
+    generation = await session.get(VideoGeneration, story.featured_video_id)
+    if generation is None or generation.story_id != story.id or not video_ready(generation):
+        return None
+    return generation
+
+
+async def video_out(session: AsyncSession, story: Story) -> StoryVideoOut | None:
+    generation = await shown_video(session, story)
+    if generation is None:
+        return None
+    payload = generation.payload
+    voice = "omni" if payload.get("audio") == "omni" else payload.get("soundtrack", "narration")
+    clone_id = payload.get("voice_clone_id")
+    clone = await session.get(VoiceClone, uuid.UUID(clone_id)) if clone_id else None
+    return StoryVideoOut(
+        # The id in the URL changes when another video is shown, so no cache keeps the old one.
+        url=f"/api/v1/stories/{story.id}/video?v={generation.id.hex[:12]}",
+        voice=voice,
+        narrated_by=clone.speaker_name if clone and voice == "narration" else None,
+    )
+
+
 def _ai_video_out(story: Story, viewer: User | None) -> AiVideoOut | None:
     sample = next((x for x in billing.SAMPLES if x["id"] == story.ai_video_sample), None)
     if sample is None:
@@ -383,6 +431,7 @@ async def to_out(
         narration=await _narration_out(session, story.id),
         slideshow=await _slideshow_out(session, story.id),
         ai_video=_ai_video_out(story, viewer),
+        video=await video_out(session, story),
     )
     if private:
         out.narrator_voice_id = story.narrator_voice_id
@@ -773,6 +822,25 @@ async def edit_layer(
         raise HTTPException(422, "Keep exactly one text for each line.") from None
     await session.refresh(story)
     return await to_out(session, story, private=True, viewer=user)
+
+
+@router.api_route("/{story_id}/video", methods=["GET", "HEAD"], include_in_schema=False)
+async def serve_story_video(
+    story_id: str,
+    user: User | None = Depends(current_user_optional),
+    session: AsyncSession = Depends(get_session),
+    storage: LocalStorage = Depends(get_storage),
+) -> FileResponse:
+    """The video shown on the story's page: anyone while the story is published, otherwise
+    its author and staff, as for the story's other files."""
+    story = await _visible_story(session, story_id, user)
+    generation = await shown_video(session, story)
+    if generation is None:
+        raise HTTPException(404, "Not found.")
+    cache = "no-cache" if story.status == StoryStatus.PUBLISHED else "private, no-store"
+    return FileResponse(
+        storage.path(generation.file_key), media_type="video/mp4", headers={"Cache-Control": cache}
+    )
 
 
 @media_router.api_route("/media/{asset_id}", methods=["GET", "HEAD"], include_in_schema=False)

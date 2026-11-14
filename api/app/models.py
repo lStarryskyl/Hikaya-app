@@ -206,6 +206,10 @@ class Story(Base):
     narrator_voice_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("voice_clones.id", ondelete="SET NULL")
     )
+    # The finished narrated video staff show on the story's page, to everyone.
+    featured_video_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("video_generations.id", ondelete="SET NULL")
+    )
     # A pre-made AI video sample shown on this story to premium members (#19); seeded only.
     ai_video_sample: Mapped[str | None] = mapped_column(Text)
     # Which text the narration reads: the polished text, or the MSA translation.
@@ -515,6 +519,11 @@ class AuditAction(StrEnum):
     VOICE_REVOKED = "voice_revoked"
     NARRATION_REGENERATED = "narration_regenerated"
     VOICE_VERIFIED = "voice_verified"
+    PHOTO_ADDED = "photo_added"
+    PHOTO_REMOVED = "photo_removed"
+    PHOTOS_REORDERED = "photos_reordered"
+    VIDEO_SHOWN = "video_shown"
+    VIDEO_HIDDEN = "video_hidden"
 
 
 class AuditEvent(Base):

@@ -24,5 +24,6 @@ cd api && python -m app.story_pack import
 
 Provenance of `kayed-kiosk-magazine`: recorded at the kiosk in downtown Amman and cut to one
 48-second story (questions and a second story removed) on 2026-11-14; photos by the Hikaya team.
-The video was made with Gemini Omni Flash over his own recording; signs the model invented in
-its second half were blurred. Spoken permission to use his voice is in the original interview.
+The video was made with Gemini Omni Flash over his own recording. Its last two shots were made
+again close up, without the kiosk sign the model had invented in its first attempt, so nothing in
+it is blurred. Spoken permission to use his voice is in the original interview.
